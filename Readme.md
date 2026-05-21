@@ -38,7 +38,7 @@
 
 ## Data Sources
 
-### English
+
 * **Primary API:** Powered by the official [Steam Web API](https://partner.steamgames.com/doc/webapi_overview) and Enhanced with partial contributions and metadata from [Steam Hunters](https://steamhunters.com/) and [Exophase](https://www.exophase.com/).
 
 This is still experimental and built mostly for personal discovery
