@@ -1,10 +1,5 @@
 ### Steam Achievements
 
-
-
-&#x20; Android APK releases for Steam Achievements.
-
-
 ## The app includes the following features:
 
 * Displays your Steam profile name and avatar
