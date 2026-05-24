@@ -40,6 +40,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late String _themeMode;
   late bool _showProgressTiers;
   late bool _showRarityTiers;
+  late bool _showObtainabilityBadges;
   late bool _goldPerfectGames;
   late String _languageCode;
   late bool _showApiKey;
@@ -67,6 +68,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _themeMode = widget.initialConfig.themeMode;
     _showProgressTiers = widget.initialConfig.showProgressTiers;
     _showRarityTiers = widget.initialConfig.showRarityTiers;
+    _showObtainabilityBadges = widget.initialConfig.showObtainabilityBadges;
     _goldPerfectGames = widget.initialConfig.goldPerfectGames;
     _languageCode = widget.initialConfig.languageCode;
     _showApiKey = false;
@@ -93,6 +95,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       themeMode: _themeMode,
       showProgressTiers: _showProgressTiers,
       showRarityTiers: _showRarityTiers,
+      showObtainabilityBadges: _showObtainabilityBadges,
       goldPerfectGames: _goldPerfectGames,
     );
   }
@@ -355,23 +358,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _clearCache() async {
     final config = _currentConfig();
     if (!config.isComplete) return;
-    final confirmed = await showDialog<bool>(
+    final clearMode = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(t.clearCache),
-        content: Text(t.clearCacheWarning),
+        content:
+            Text('${t.clearCacheWarning}\n\n${t.clearCacheKeepManualHelp}'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
+              onPressed: () => Navigator.of(context).pop(),
               child: Text(t.cancel)),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop('remove_all'),
+              child: Text(t.removeManualGamesToo)),
           FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: Text(t.clearCache)),
+              onPressed: () => Navigator.of(context).pop('keep_manual'),
+              child: Text(t.keepManualGames)),
         ],
       ),
     );
-    if (confirmed != true) return;
-    await CacheStore().clearProfileCache(config.normalizedSteamId64);
+    if (clearMode == null) return;
+    await CacheStore().clearProfileCache(config.normalizedSteamId64,
+        keepManualGames: clearMode == 'keep_manual');
     widget.onSaved(config);
     await widget.onSyncRequested?.call(config);
     if (!mounted) return;
@@ -469,6 +477,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (value) => setState(() => _showRarityTiers = value),
             title: Text(t.showRarityTiers),
             subtitle: Text(t.showRarityTiersHelp)),
+        SwitchListTile(
+            value: _showObtainabilityBadges,
+            onChanged: (value) =>
+                setState(() => _showObtainabilityBadges = value),
+            title: Text(t.showObtainabilityBadges),
+            subtitle: Text(t.showObtainabilityBadgesHelp)),
         SwitchListTile(
             value: _goldPerfectGames,
             onChanged: (value) => setState(() => _goldPerfectGames = value),

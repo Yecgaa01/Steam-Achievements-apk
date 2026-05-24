@@ -28,6 +28,24 @@ class PlayerAchievementState {
   const PlayerAchievementState({required this.achieved, this.unlockTime = 0});
 }
 
+class PublicAchievementProgress {
+  final Set<String> achievedApiNames;
+  final int unlockedCount;
+  final int totalCount;
+  final Map<String, TrophySummary> partialProgress;
+  final Map<String, TrophySummary> partialProgressByTitle;
+  final List<SteamAchievement> achievements;
+
+  const PublicAchievementProgress({
+    required this.achievedApiNames,
+    required this.unlockedCount,
+    this.totalCount = 0,
+    this.partialProgress = const {},
+    this.partialProgressByTitle = const {},
+    this.achievements = const [],
+  });
+}
+
 class SteamApi {
   static const _apiBase = 'https://api.steampowered.com';
 
@@ -222,15 +240,16 @@ class SteamApi {
 
   bool _hasAchievementMarkers(String body) {
     final lower = body.toLowerCase();
-    if (lower.contains('sign in') ||
-        lower.contains('steam guard') ||
-        lower.contains('login') && lower.contains('password')) {
-      return false;
-    }
-    return lower.contains('achieverow') ||
+    final hasMarkers = lower.contains('achieverow') ||
         lower.contains('achievetxt') ||
         lower.contains('achievements') ||
         lower.contains('achievement');
+    if (hasMarkers) return true;
+    if (lower.contains('steam guard') ||
+        lower.contains('login') && lower.contains('password')) {
+      return false;
+    }
+    return false;
   }
 
   Future<bool> _hasPublicAchievementsAt(Uri uri) async {
@@ -295,7 +314,9 @@ class SteamApi {
       return null;
     }
     final hasPublicPage = await hasPublicAchievementPage(config, result);
-    if (!hasPublicPage) {
+    final schema = await _getAchievementSchema(config, result.appId)
+        .catchError((_) => const <Map<String, dynamic>>[]);
+    if (!hasPublicPage && schema.isEmpty && result.sourceUrl.isEmpty) {
       return null;
     }
     return SteamGame(
@@ -307,11 +328,161 @@ class SteamApi {
       appType: 'game',
       typeLoaded: true,
       manuallyAdded: true,
+      sourceUrl: result.sourceUrl,
     );
   }
 
-  Future<SteamGame> hydrateGameProgress(
-      SteamConfig config, SteamGame game) async {
+  Uri? _publicAchievementUri(SteamConfig config, SteamGame game) {
+    final sourceUri = Uri.tryParse(game.sourceUrl);
+    if (sourceUri != null && sourceUri.hasScheme) return sourceUri;
+    if (config.normalizedSteamId64.isEmpty) return null;
+    return Uri.parse(
+        'https://steamcommunity.com/profiles/${config.normalizedSteamId64}/stats/${game.appId}/achievements/');
+  }
+
+  Future<PublicAchievementProgress?> _getPublicAchievementProgress(
+      SteamConfig config, SteamGame game,
+      {List<Map<String, dynamic>>? schema}) async {
+    final sourceUri = _publicAchievementUri(config, game);
+    if (sourceUri == null) return null;
+    final response = await _client.get(
+      sourceUri,
+      headers: const {
+        'User-Agent': 'Mozilla/5.0 SteamAchievements/1.0',
+        'Accept': 'text/html,application/xhtml+xml'
+      },
+    ).timeout(const Duration(seconds: 20));
+    if (response.statusCode < 200 || response.statusCode >= 300) return null;
+    if (!_hasAchievementMarkers(response.body)) return null;
+
+    final pageProgressMatch = RegExp(
+            r'(\d+)\s+of\s+(\d+)\s+\([^)]*\)\s+achievements\s+earned',
+            caseSensitive: false)
+        .firstMatch(_decodeHtml(response.body));
+    final pageUnlocked = pageProgressMatch == null
+        ? 0
+        : int.tryParse(pageProgressMatch.group(1) ?? '') ?? 0;
+    final pageTotal = pageProgressMatch == null
+        ? 0
+        : int.tryParse(pageProgressMatch.group(2) ?? '') ?? 0;
+
+    schema ??= await _getAchievementSchema(config, game.appId);
+    final matchingSchema = config.languageCode == 'en'
+        ? schema
+        : <Map<String, dynamic>>[
+            ...schema,
+            ...await _getAchievementSchema(
+                config.copyWith(languageCode: 'en'), game.appId),
+          ];
+    final iconToApi = <String, String>{};
+    final nameToApi = <String, String>{};
+    for (final achievement in matchingSchema) {
+      final apiName = '${achievement['name'] ?? ''}';
+      if (apiName.isEmpty) continue;
+      final iconFile = _imageFileName('${achievement['icon'] ?? ''}');
+      final grayFile = _imageFileName('${achievement['icongray'] ?? ''}');
+      final name =
+          _normalizeMatchText('${achievement['displayName'] ?? apiName}');
+      if (iconFile.isNotEmpty) iconToApi[iconFile] = apiName;
+      if (grayFile.isNotEmpty) iconToApi[grayFile] = apiName;
+      if (name.isNotEmpty) nameToApi[name] = apiName;
+    }
+
+    final achieved = <String>{};
+    var unlockedCount = 0;
+    final blocks = RegExp(
+            r'<div[^>]+class="[^"]*achieveRow[^"]*"[\s\S]*?(?=<div[^>]+class="[^"]*achieveRow|<br><br><br>|</body>|$)',
+            caseSensitive: false)
+        .allMatches(response.body)
+        .map((match) => match.group(0) ?? '')
+        .where((block) => block.trim().isNotEmpty)
+        .toList();
+    final scanBlocks = blocks.isNotEmpty
+        ? blocks
+        : RegExp(r'<h3[\s\S]*?</h5>[\s\S]*?(?:Unlocked[^<\n]*|\d+\s*/\s*\d+)?',
+                caseSensitive: false)
+            .allMatches(response.body)
+            .map((match) => match.group(0) ?? '')
+            .toList();
+
+    final partialProgress = <String, TrophySummary>{};
+    final partialProgressByTitle = <String, TrophySummary>{};
+    final publicAchievements = <SteamAchievement>[];
+    for (final block in scanBlocks) {
+      final imageMatch = RegExp(r'<img[^>]+src="([^"]+)"', caseSensitive: false)
+          .firstMatch(block);
+      final titleMatch =
+          RegExp(r'<h3[^>]*>([\s\S]*?)</h3>', caseSensitive: false)
+              .firstMatch(block);
+      final title = _decodeHtml(_stripHtml(titleMatch?.group(1) ?? ''));
+      final normalizedTitle = _normalizeMatchText(title);
+      final imageApi =
+          iconToApi[_imageFileName(_decodeHtml(imageMatch?.group(1) ?? ''))];
+      final titleApi = nameToApi[normalizedTitle];
+      final apiName = imageApi ?? titleApi;
+      if (apiName != null && apiName.isNotEmpty) {
+        final progressMatch =
+            RegExp(r'(\d+)\s*/\s*(\d+)').firstMatch(_stripHtml(block));
+        if (progressMatch != null) {
+          final current = int.tryParse(progressMatch.group(1) ?? '') ?? 0;
+          final total = int.tryParse(progressMatch.group(2) ?? '') ?? 0;
+          if (total > 0) {
+            final summary = TrophySummary(unlocked: current, total: total);
+            partialProgressByTitle[normalizedTitle] = summary;
+            partialProgress[apiName] = summary;
+          }
+        }
+      }
+      if (title.isEmpty ||
+          RegExp(r'hidden\s+achievements?\s+remaining', caseSensitive: false)
+              .hasMatch(title)) {
+        continue;
+      }
+      final descriptionMatch =
+          RegExp(r'<h5[^>]*>([\s\S]*?)</h5>', caseSensitive: false)
+              .firstMatch(block);
+      final imageUrl = _decodeHtml(imageMatch?.group(1) ?? '');
+      final isUnlocked =
+          RegExp(r'Unlocked\s', caseSensitive: false).hasMatch(block);
+      if (apiName == null &&
+          !isUnlocked &&
+          !partialProgressByTitle.containsKey(normalizedTitle)) {
+        continue;
+      }
+      if (title.isNotEmpty) {
+        final progress = partialProgressByTitle[normalizedTitle];
+        publicAchievements.add(SteamAchievement(
+          apiName: apiName ?? normalizedTitle,
+          name: title,
+          description:
+              _decodeHtml(_stripHtml(descriptionMatch?.group(1) ?? '')),
+          icon: imageUrl,
+          iconGray: imageUrl,
+          hidden: false,
+          achieved: isUnlocked,
+          progressCurrent: progress?.unlocked ?? 0,
+          progressTotal: progress?.total ?? 0,
+        ));
+      }
+      if (!isUnlocked) {
+        continue;
+      }
+      unlockedCount++;
+      if (apiName != null && apiName.isNotEmpty) achieved.add(apiName);
+    }
+
+    return PublicAchievementProgress(
+      achievedApiNames: achieved,
+      unlockedCount: unlockedCount > 0 ? unlockedCount : pageUnlocked,
+      totalCount: pageTotal,
+      partialProgress: partialProgress,
+      partialProgressByTitle: partialProgressByTitle,
+      achievements: publicAchievements,
+    );
+  }
+
+  Future<SteamGame> hydrateGameProgress(SteamConfig config, SteamGame game,
+      {bool allowPublicFallback = false}) async {
     try {
       final schema = await _getAchievementSchema(config, game.appId);
       if (schema.isEmpty) {
@@ -325,11 +496,67 @@ class SteamApi {
         hasAchievements: true,
       );
     } on NoAchievementsException {
+      if (allowPublicFallback ||
+          game.manuallyAdded ||
+          game.sourceUrl.isNotEmpty) {
+        try {
+          final publicProgress =
+              await _getPublicAchievementProgress(config, game);
+          if (publicProgress != null && publicProgress.totalCount > 0) {
+            return game.copyWith(
+              unlocked: publicProgress.unlockedCount,
+              total: publicProgress.totalCount,
+              progressLoaded: true,
+              hasAchievements: true,
+            );
+          }
+        } catch (_) {
+          // Keep the game visible if public fallback fails.
+        }
+        return game.copyWith(progressLoaded: false, hasAchievements: true);
+      }
       return game.copyWith(
           unlocked: 0, total: 0, progressLoaded: true, hasAchievements: false);
     } catch (_) {
+      if (allowPublicFallback ||
+          game.manuallyAdded ||
+          game.sourceUrl.isNotEmpty) {
+        try {
+          final publicProgress =
+              await _getPublicAchievementProgress(config, game);
+          if (publicProgress != null && publicProgress.totalCount > 0) {
+            return game.copyWith(
+              unlocked: publicProgress.unlockedCount,
+              total: publicProgress.totalCount,
+              progressLoaded: true,
+              hasAchievements: true,
+            );
+          }
+        } catch (_) {
+          // Keep the game visible if public fallback fails.
+        }
+      }
       return game;
     }
+  }
+
+  Future<List<SteamAchievement>> getAchievementsForGame(
+      SteamConfig config, SteamGame game) async {
+    final schema = await _getAchievementSchema(config, game.appId);
+    if (schema.isEmpty) {
+      throw NoAchievementsException();
+    }
+    Map<String, PlayerAchievementState> player = const {};
+    PublicAchievementProgress? publicProgress;
+    publicProgress =
+        await _getPublicAchievementProgress(config, game, schema: schema);
+    try {
+      player = await _getPlayerAchievements(config, game.appId);
+    } catch (_) {
+      player = const {};
+    }
+    return _buildAchievements(config, game.appId, schema, player,
+        publicProgress: publicProgress);
   }
 
   Future<List<SteamAchievement>> getAchievements(
@@ -339,8 +566,18 @@ class SteamApi {
       throw NoAchievementsException();
     }
     final player = await _getPlayerAchievements(config, appId);
+    return _buildAchievements(config, appId, schema, player);
+  }
+
+  Future<List<SteamAchievement>> _buildAchievements(
+      SteamConfig config,
+      int appId,
+      List<Map<String, dynamic>> schema,
+      Map<String, PlayerAchievementState> player,
+      {PublicAchievementProgress? publicProgress}) async {
     final global = await _getGlobalPercentages(appId);
     final steamHuntersDescriptions = await _getSteamHuntersDescriptions(appId);
+    final obtainability = await _getSteamHuntersObtainability(appId);
     final steamHuntersGroups = config.separateDlcAchievements
         ? await _getSteamHuntersGroups(appId)
         : <String, String>{};
@@ -364,10 +601,26 @@ class SteamApi {
             icon: '${achievement['icon'] ?? ''}',
             iconGray: '${achievement['icongray'] ?? ''}',
             hidden: boolFromAny(achievement['hidden']),
-            achieved: player[apiName]?.achieved ?? false,
+            achieved: publicProgress != null
+                ? publicProgress.achievedApiNames.contains(apiName)
+                : (player[apiName]?.achieved ?? false),
             globalPercent: global[apiName],
             unlockTime: player[apiName]?.unlockTime ?? 0,
             groupName: _groupNameForApiName(apiName, groups),
+            progressCurrent:
+                publicProgress?.partialProgress[apiName]?.unlocked ??
+                    publicProgress
+                        ?.partialProgressByTitle[_normalizeMatchText(
+                            '${achievement['displayName'] ?? apiName}')]
+                        ?.unlocked ??
+                    0,
+            progressTotal: publicProgress?.partialProgress[apiName]?.total ??
+                publicProgress
+                    ?.partialProgressByTitle[_normalizeMatchText(
+                        '${achievement['displayName'] ?? apiName}')]
+                    ?.total ??
+                0,
+            obtainability: obtainability[apiName] ?? 0,
           );
         })
         .where((achievement) => achievement.apiName.isNotEmpty)
@@ -425,6 +678,22 @@ class SteamApi {
           if (item['apiName'] != null &&
               '${item['description'] ?? ''}'.trim().isNotEmpty)
             '${item['apiName']}': '${item['description']}'.trim(),
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<Map<String, int>> _getSteamHuntersObtainability(int appId) async {
+    final uri =
+        Uri.parse('https://steamhunters.com/api/apps/$appId/achievements');
+    try {
+      final data = await _getJsonValue(uri);
+      final achievements = data is List ? data : const [];
+      return {
+        for (final item in achievements.whereType<Map<String, dynamic>>())
+          if (item['apiName'] != null)
+            '${item['apiName']}': intFromAny(item['obtainability']),
       };
     } catch (_) {
       return {};

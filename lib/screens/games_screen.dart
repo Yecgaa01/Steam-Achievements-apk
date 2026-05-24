@@ -148,6 +148,7 @@ class _GamesScreenState extends State<GamesScreen> {
             appType: cachedAppType,
             typeLoaded: cachedTypeLoaded,
             manuallyAdded: cached.manuallyAdded,
+            sourceUrl: cached.sourceUrl,
           );
         }),
         ...manualGames,
@@ -261,8 +262,10 @@ class _GamesScreenState extends State<GamesScreen> {
     for (var index = 0; index < candidates.length; index += 3) {
       final chunk =
           candidates.sublist(index, (index + 3).clamp(0, candidates.length));
-      final hydratedGames = await Future.wait(
-          chunk.map((game) => _api.hydrateGameProgress(widget.config, game)));
+      final hydratedGames = await Future.wait(chunk.map((game) =>
+          _api.hydrateGameProgress(widget.config, game,
+              allowPublicFallback:
+                  game.manuallyAdded || game.sourceUrl.isNotEmpty)));
       if (!mounted) return;
       setState(() {
         for (final hydrated in hydratedGames) {
@@ -324,8 +327,35 @@ class _GamesScreenState extends State<GamesScreen> {
           }
 
           Future<void> add(SteamStoreSearchResult result) async {
-            if (_games.any((game) => game.appId == result.appId)) {
-              setSheetState(() => message = t.manualGameAlreadyInList);
+            final existingIndex =
+                _games.indexWhere((game) => game.appId == result.appId);
+            if (existingIndex >= 0) {
+              final existing = _games[existingIndex];
+              if (result.sourceUrl.isEmpty) {
+                setSheetState(() => message = t.manualGameAlreadyInList);
+                return;
+              }
+              final updated = existing.copyWith(
+                manuallyAdded: true,
+                sourceUrl: result.sourceUrl,
+                progressLoaded: false,
+                hasAchievements: true,
+              );
+              setState(() => _games[existingIndex] = updated);
+              await _cache.saveCachedGames(
+                  widget.config.normalizedSteamId64, _games);
+              await _cache.clearCachedAchievements(
+                  widget.config.normalizedSteamId64, result.appId);
+              if (!mounted || !context.mounted) return;
+              setSheetState(() {
+                addingAppId = 0;
+                results = const [];
+                message = t.manualGameUpdated;
+              });
+              _manualGameController.clear();
+              ScaffoldMessenger.of(this.context)
+                  .showSnackBar(SnackBar(content: Text(t.manualGameUpdated)));
+              _reloadGameProgress(updated);
               return;
             }
             setSheetState(() {
@@ -513,8 +543,12 @@ class _GamesScreenState extends State<GamesScreen> {
     });
     final index = _games.indexWhere((item) => item.appId == game.appId);
     if (index >= 0) {
-      final hydrated =
-          await _api.hydrateGameProgress(widget.config, _games[index]);
+      await _cache.clearCachedAchievements(
+          widget.config.normalizedSteamId64, game.appId);
+      final hydrated = await _api.hydrateGameProgress(
+          widget.config, _games[index],
+          allowPublicFallback: _games[index].manuallyAdded ||
+              _games[index].sourceUrl.isNotEmpty);
       if (!mounted) return;
       setState(() => _games[index] = hydrated);
       await _cache.saveCachedGames(widget.config.normalizedSteamId64, _games);

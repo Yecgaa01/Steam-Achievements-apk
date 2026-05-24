@@ -18,6 +18,7 @@ class CacheStore {
   static const _themeModeKey = 'theme_mode';
   static const _showProgressTiersKey = 'show_progress_tiers';
   static const _showRarityTiersKey = 'show_rarity_tiers';
+  static const _showObtainabilityBadgesKey = 'show_obtainability_badges';
   static const _goldPerfectGamesKey = 'gold_perfect_games';
 
   Future<SteamConfig> loadConfig() async {
@@ -28,13 +29,17 @@ class CacheStore {
       showHidden: prefs.getBool(_showHiddenKey) ?? false,
       languageCode: prefs.getString(_languageKey) ?? 'pt',
       showAverageCompletion: prefs.getBool(_showAverageKey) ?? false,
-      hideGamesWithoutAchievements: prefs.getBool(_hideNoAchievementsKey) ?? false,
+      hideGamesWithoutAchievements:
+          prefs.getBool(_hideNoAchievementsKey) ?? false,
       hideSoftware: prefs.getBool(_hideSoftwareKey) ?? false,
       hideZeroPercentGames: prefs.getBool(_hideZeroPercentKey) ?? false,
-      separateDlcAchievements: prefs.getBool(_separateDlcAchievementsKey) ?? false,
+      separateDlcAchievements:
+          prefs.getBool(_separateDlcAchievementsKey) ?? false,
       themeMode: prefs.getString(_themeModeKey) ?? 'system',
       showProgressTiers: prefs.getBool(_showProgressTiersKey) ?? true,
       showRarityTiers: prefs.getBool(_showRarityTiersKey) ?? true,
+      showObtainabilityBadges:
+          prefs.getBool(_showObtainabilityBadgesKey) ?? true,
       goldPerfectGames: prefs.getBool(_goldPerfectGamesKey) ?? true,
     );
   }
@@ -46,13 +51,17 @@ class CacheStore {
     await prefs.setBool(_showHiddenKey, config.showHidden);
     await prefs.setString(_languageKey, config.languageCode);
     await prefs.setBool(_showAverageKey, config.showAverageCompletion);
-    await prefs.setBool(_hideNoAchievementsKey, config.hideGamesWithoutAchievements);
+    await prefs.setBool(
+        _hideNoAchievementsKey, config.hideGamesWithoutAchievements);
     await prefs.setBool(_hideSoftwareKey, config.hideSoftware);
     await prefs.setBool(_hideZeroPercentKey, config.hideZeroPercentGames);
-    await prefs.setBool(_separateDlcAchievementsKey, config.separateDlcAchievements);
+    await prefs.setBool(
+        _separateDlcAchievementsKey, config.separateDlcAchievements);
     await prefs.setString(_themeModeKey, config.themeMode);
     await prefs.setBool(_showProgressTiersKey, config.showProgressTiers);
     await prefs.setBool(_showRarityTiersKey, config.showRarityTiers);
+    await prefs.setBool(
+        _showObtainabilityBadgesKey, config.showObtainabilityBadges);
     await prefs.setBool(_goldPerfectGamesKey, config.goldPerfectGames);
   }
 
@@ -66,7 +75,8 @@ class CacheStore {
 
   Future<void> saveHiddenGameAppIds(Set<int> appIds) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_hiddenGameAppIdsKey, appIds.map((appId) => '$appId').toList()..sort());
+    await prefs.setStringList(
+        _hiddenGameAppIdsKey, appIds.map((appId) => '$appId').toList()..sort());
   }
 
   Future<Map<String, dynamic>?> getJson(String key) async {
@@ -99,7 +109,10 @@ class CacheStore {
     final json = await getJson('games_$steamId64');
     final items = json?['games'];
     if (items is! List) return [];
-    return items.whereType<Map<String, dynamic>>().map(SteamGame.fromCacheJson).toList();
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map(SteamGame.fromCacheJson)
+        .toList();
   }
 
   Future<void> saveCachedGames(String steamId64, List<SteamGame> games) async {
@@ -114,31 +127,84 @@ class CacheStore {
     if (games.isEmpty) return;
     await saveCachedGames(
       steamId64,
-      games.map((game) => game.copyWith(unlocked: 0, total: 0, progressLoaded: false, hasAchievements: true)).toList(),
+      games
+          .map((game) => game.copyWith(
+              unlocked: 0,
+              total: 0,
+              progressLoaded: false,
+              hasAchievements: true))
+          .toList(),
     );
   }
 
-  Future<List<SteamAchievement>> loadCachedAchievements(String steamId64, int appId) async {
+  Future<List<SteamAchievement>> loadCachedAchievements(
+      String steamId64, int appId) async {
     final json = await getJson('achievements_${steamId64}_$appId');
     final items = json?['achievements'];
     if (items is! List) return [];
-    return items.whereType<Map<String, dynamic>>().map(SteamAchievement.fromJson).where((achievement) => achievement.apiName.isNotEmpty).toList();
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map(SteamAchievement.fromJson)
+        .where((achievement) => achievement.apiName.isNotEmpty)
+        .toList();
   }
 
-  Future<void> saveCachedAchievements(String steamId64, int appId, List<SteamAchievement> achievements) async {
+  Future<void> saveCachedAchievements(
+      String steamId64, int appId, List<SteamAchievement> achievements) async {
     if (achievements.isEmpty) return;
     await setJson('achievements_${steamId64}_$appId', {
       'saved_at': DateTime.now().toIso8601String(),
-      'achievements': achievements.map((achievement) => achievement.toJson()).toList(),
+      'achievements':
+          achievements.map((achievement) => achievement.toJson()).toList(),
     });
   }
 
-  Future<void> clearProfileCache(String steamId64) async {
+  Future<void> clearCachedAchievements(String steamId64, int appId) async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('cache_achievements_${steamId64}_$appId');
+  }
+
+  Future<Set<String>> loadPinnedAchievementIds(
+      String steamId64, int appId) async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList('pinned_achievements_${steamId64}_$appId') ??
+            const [])
+        .where((id) => id.trim().isNotEmpty)
+        .toSet();
+  }
+
+  Future<void> savePinnedAchievementIds(
+      String steamId64, int appId, Set<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+        'pinned_achievements_${steamId64}_$appId', ids.toList()..sort());
+  }
+
+  Future<void> clearProfileCache(String steamId64,
+      {bool keepManualGames = false}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final manualGames = keepManualGames
+        ? (await loadCachedGames(steamId64))
+            .where((game) => game.manuallyAdded || game.sourceUrl.isNotEmpty)
+            .map((game) => game.copyWith(
+                unlocked: 0,
+                total: 0,
+                progressLoaded: false,
+                hasAchievements: true,
+                typeLoaded: false,
+                appType: 'unknown'))
+            .toList()
+        : <SteamGame>[];
     await prefs.remove('cache_profile_$steamId64');
     await prefs.remove('cache_games_$steamId64');
-    for (final key in prefs.getKeys().where((key) => key.startsWith('cache_achievements_${steamId64}_')).toList()) {
+    for (final key in prefs
+        .getKeys()
+        .where((key) => key.startsWith('cache_achievements_${steamId64}_'))
+        .toList()) {
       await prefs.remove(key);
+    }
+    if (manualGames.isNotEmpty) {
+      await saveCachedGames(steamId64, manualGames);
     }
   }
 }

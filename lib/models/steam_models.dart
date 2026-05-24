@@ -11,6 +11,7 @@ class SteamConfig {
   final String themeMode;
   final bool showProgressTiers;
   final bool showRarityTiers;
+  final bool showObtainabilityBadges;
   final bool goldPerfectGames;
 
   const SteamConfig({
@@ -26,10 +27,12 @@ class SteamConfig {
     this.themeMode = 'system',
     this.showProgressTiers = true,
     this.showRarityTiers = true,
+    this.showObtainabilityBadges = true,
     this.goldPerfectGames = true,
   });
 
-  bool get isComplete => steamId64.trim().isNotEmpty && apiKey.trim().isNotEmpty;
+  bool get isComplete =>
+      steamId64.trim().isNotEmpty && apiKey.trim().isNotEmpty;
   String get normalizedSteamId64 => steamId64.trim();
   String get normalizedApiKey => apiKey.trim();
 
@@ -46,6 +49,7 @@ class SteamConfig {
     String? themeMode,
     bool? showProgressTiers,
     bool? showRarityTiers,
+    bool? showObtainabilityBadges,
     bool? goldPerfectGames,
   }) {
     return SteamConfig(
@@ -53,14 +57,19 @@ class SteamConfig {
       apiKey: apiKey ?? this.apiKey,
       showHidden: showHidden ?? this.showHidden,
       languageCode: languageCode ?? this.languageCode,
-      showAverageCompletion: showAverageCompletion ?? this.showAverageCompletion,
-      hideGamesWithoutAchievements: hideGamesWithoutAchievements ?? this.hideGamesWithoutAchievements,
+      showAverageCompletion:
+          showAverageCompletion ?? this.showAverageCompletion,
+      hideGamesWithoutAchievements:
+          hideGamesWithoutAchievements ?? this.hideGamesWithoutAchievements,
       hideSoftware: hideSoftware ?? this.hideSoftware,
       hideZeroPercentGames: hideZeroPercentGames ?? this.hideZeroPercentGames,
-      separateDlcAchievements: separateDlcAchievements ?? this.separateDlcAchievements,
+      separateDlcAchievements:
+          separateDlcAchievements ?? this.separateDlcAchievements,
       themeMode: themeMode ?? this.themeMode,
       showProgressTiers: showProgressTiers ?? this.showProgressTiers,
       showRarityTiers: showRarityTiers ?? this.showRarityTiers,
+      showObtainabilityBadges:
+          showObtainabilityBadges ?? this.showObtainabilityBadges,
       goldPerfectGames: goldPerfectGames ?? this.goldPerfectGames,
     );
   }
@@ -95,7 +104,10 @@ class SteamProfile {
   final String personaName;
   final String avatarUrl;
 
-  const SteamProfile({required this.steamId64, required this.personaName, required this.avatarUrl});
+  const SteamProfile(
+      {required this.steamId64,
+      required this.personaName,
+      required this.avatarUrl});
 
   Map<String, dynamic> toJson() {
     return {
@@ -109,7 +121,8 @@ class SteamProfile {
     return SteamProfile(
       steamId64: '${json['steamid'] ?? ''}',
       personaName: '${json['personaname'] ?? 'Steam'}',
-      avatarUrl: '${json['avatarfull'] ?? json['avatarmedium'] ?? json['avatar'] ?? ''}',
+      avatarUrl:
+          '${json['avatarfull'] ?? json['avatarmedium'] ?? json['avatar'] ?? ''}',
     );
   }
 }
@@ -127,6 +140,7 @@ class SteamGame {
   final String appType;
   final bool typeLoaded;
   final bool manuallyAdded;
+  final String sourceUrl;
 
   const SteamGame({
     required this.appId,
@@ -141,12 +155,23 @@ class SteamGame {
     this.appType = 'unknown',
     this.typeLoaded = false,
     this.manuallyAdded = false,
+    this.sourceUrl = '',
   });
 
   double get progress => total == 0 ? 0 : unlocked / total;
-  String get headerUrl => 'https://cdn.akamai.steamstatic.com/steam/apps/$appId/header.jpg';
+  String get headerUrl =>
+      'https://cdn.akamai.steamstatic.com/steam/apps/$appId/header.jpg';
 
-  SteamGame copyWith({int? unlocked, int? total, bool? progressLoaded, bool? hasAchievements, String? appType, bool? typeLoaded, int? lastPlayedUnix, bool? manuallyAdded}) {
+  SteamGame copyWith(
+      {int? unlocked,
+      int? total,
+      bool? progressLoaded,
+      bool? hasAchievements,
+      String? appType,
+      bool? typeLoaded,
+      int? lastPlayedUnix,
+      bool? manuallyAdded,
+      String? sourceUrl}) {
     return SteamGame(
       appId: appId,
       name: name,
@@ -160,6 +185,7 @@ class SteamGame {
       appType: appType ?? this.appType,
       typeLoaded: typeLoaded ?? this.typeLoaded,
       manuallyAdded: manuallyAdded ?? this.manuallyAdded,
+      sourceUrl: sourceUrl ?? this.sourceUrl,
     );
   }
 
@@ -177,6 +203,7 @@ class SteamGame {
       'app_type': appType,
       'type_loaded': typeLoaded,
       'manually_added': manuallyAdded,
+      'source_url': sourceUrl,
     };
   }
 
@@ -186,10 +213,13 @@ class SteamGame {
       unlocked: intFromAny(json['unlocked']),
       total: intFromAny(json['total']),
       progressLoaded: boolFromAny(json['progress_loaded']),
-      hasAchievements: json.containsKey('has_achievements') ? boolFromAny(json['has_achievements']) : true,
+      hasAchievements: json.containsKey('has_achievements')
+          ? boolFromAny(json['has_achievements'])
+          : true,
       appType: '${json['app_type'] ?? 'unknown'}',
       typeLoaded: boolFromAny(json['type_loaded']),
       manuallyAdded: boolFromAny(json['manually_added']),
+      sourceUrl: '${json['source_url'] ?? ''}',
       lastPlayedUnix: intFromAny(json['rtime_last_played']),
     );
   }
@@ -211,7 +241,8 @@ class SteamAppDetails {
   final String type;
   final bool utility;
 
-  const SteamAppDetails({required this.appId, required this.type, this.utility = false});
+  const SteamAppDetails(
+      {required this.appId, required this.type, this.utility = false});
 }
 
 class SteamAchievement {
@@ -225,6 +256,9 @@ class SteamAchievement {
   final double? globalPercent;
   final int unlockTime;
   final String groupName;
+  final int progressCurrent;
+  final int progressTotal;
+  final int obtainability;
 
   const SteamAchievement({
     required this.apiName,
@@ -237,6 +271,9 @@ class SteamAchievement {
     this.globalPercent,
     this.unlockTime = 0,
     this.groupName = '',
+    this.progressCurrent = 0,
+    this.progressTotal = 0,
+    this.obtainability = 0,
   });
 
   Map<String, dynamic> toJson() {
@@ -251,6 +288,9 @@ class SteamAchievement {
       'global_percent': globalPercent,
       'unlocktime': unlockTime,
       'group_name': groupName,
+      'progress_current': progressCurrent,
+      'progress_total': progressTotal,
+      'obtainability': obtainability,
     };
   }
 
@@ -263,9 +303,15 @@ class SteamAchievement {
       iconGray: '${json['icongray'] ?? json['iconGray'] ?? ''}',
       hidden: boolFromAny(json['hidden']),
       achieved: boolFromAny(json['achieved']),
-      globalPercent: doubleFromAny(json['global_percent'] ?? json['globalPercent']),
+      globalPercent:
+          doubleFromAny(json['global_percent'] ?? json['globalPercent']),
       unlockTime: intFromAny(json['unlocktime'] ?? json['unlockTime']),
       groupName: '${json['group_name'] ?? json['groupName'] ?? ''}',
+      progressCurrent:
+          intFromAny(json['progress_current'] ?? json['progressCurrent']),
+      progressTotal:
+          intFromAny(json['progress_total'] ?? json['progressTotal']),
+      obtainability: intFromAny(json['obtainability']),
     );
   }
 }
@@ -300,10 +346,15 @@ class ProfileStats {
   double get totalPlaytimeHours => totalPlaytimeMinutes / 60;
 
   factory ProfileStats.fromGames(List<SteamGame> games) {
-    final loaded = games.where((game) => game.progressLoaded && game.hasAchievements).toList();
-    final perfect = loaded.where((game) => game.total > 0 && game.unlocked == game.total).toList();
+    final loaded = games
+        .where((game) => game.progressLoaded && game.hasAchievements)
+        .toList();
+    final perfect = loaded
+        .where((game) => game.total > 0 && game.unlocked == game.total)
+        .toList();
     return ProfileStats(
-      totalPlaytimeMinutes: games.fold(0, (sum, game) => sum + game.playtimeForever),
+      totalPlaytimeMinutes:
+          games.fold(0, (sum, game) => sum + game.playtimeForever),
       totalGames: games.length,
       loadedGames: loaded.length,
       completedGames: perfect.length,

@@ -79,6 +79,7 @@ class AppText {
       isPt ? 'Mostrando dados salvos offline.' : 'Showing saved offline data.';
   String get firstAchievement =>
       isPt ? 'Primeira conquista' : 'First achievement';
+  String get lastAchievement => isPt ? 'Última conquista' : 'Last achievement';
   String get lastPlayed => isPt ? 'Última vez jogado' : 'Last played';
   String get unavailableShort => '—';
   String get hideSoftware => isPt ? 'Ocultar não-jogos' : 'Hide non-games';
@@ -102,6 +103,14 @@ class AppText {
       ? 'Tenta agrupar conquistas por DLC/update usando fontes públicas quando disponíveis. Pode falhar ou ficar incompleto.'
       : 'Tries to group achievements by DLC/update using public sources when available. It may fail or be incomplete.';
   String get baseGame => isPt ? 'Jogo base' : 'Base game';
+  String get pinnedAchievements => isPt ? 'Fixadas' : 'Pinned';
+  String get pinAchievement => isPt ? 'Fixar conquista' : 'Pin achievement';
+  String get unpinAchievement =>
+      isPt ? 'Desfixar conquista' : 'Unpin achievement';
+  String get achievementPinned =>
+      isPt ? 'Conquista fixada.' : 'Achievement pinned.';
+  String get achievementUnpinned =>
+      isPt ? 'Conquista desfixada.' : 'Achievement unpinned.';
   String get steamIdHelpLink => isPt
       ? 'Abrir página para descobrir SteamID64'
       : 'Open page to find SteamID64';
@@ -145,6 +154,8 @@ class AppText {
   String get manualGameAddFailed => isPt
       ? 'Não foi possível adicionar este jogo. Ele pode não ter conquistas públicas na Steam ou não ser um jogo.'
       : 'Could not add this game. It may not have public Steam achievements or may not be a game.';
+  String get manualGameUpdated =>
+      isPt ? 'Link público atualizado.' : 'Public link updated.';
   String get manualGameAdded => isPt ? 'Jogo adicionado.' : 'Game added.';
   String get removeManualGame =>
       isPt ? 'Remover jogo manual' : 'Remove manual game';
@@ -172,6 +183,12 @@ class AppText {
   String get showRarityTiersHelp => isPt
       ? 'Exibe Comum, Rara, Mítica etc. nas conquistas.'
       : 'Shows Common, Rare, Mythic, and other tiers on achievements.';
+  String get showObtainabilityBadges => isPt
+      ? 'Mostrar status do Steam Hunters (experimental)'
+      : 'Show Steam Hunters status (experimental)';
+  String get showObtainabilityBadgesHelp => isPt
+      ? 'Mostra badges experimentais para conquistas bugadas, condicionais ou impossíveis de obter usando a API do Steam Hunters.'
+      : 'Shows experimental badges for bugged, conditional, or unobtainable achievements using the Steam Hunters API.';
   String get goldPerfectGames =>
       isPt ? 'Dourado em jogos perfeitos' : 'Gold on perfect games';
   String get goldPerfectGamesHelp => isPt
@@ -184,12 +201,22 @@ class AppText {
   String get clearCacheWarning => isPt
       ? 'Limpar cache vai apagar progresso carregado e classificações de jogos/não-jogos salvas. O app terá que consultar a Steam novamente. Usar isso repetidas vezes pode causar um cooldown temporário até a Steam liberar o acesso à loja novamente. Se o problema for só um jogo, segure o toque nele na lista e use “Recarregar progresso deste jogo”.'
       : 'Clearing cache will remove loaded progress and saved game/non-game classifications. The app will need to query Steam again. Repeated use can cause a temporary cooldown until Steam allows Store access again. If the issue is only one game, long-press it in the list and use “Reload this game progress”.';
+  String get keepManualGames =>
+      isPt ? 'Manter jogos manuais' : 'Keep manual games';
+  String get removeManualGamesToo =>
+      isPt ? 'Remover tudo' : 'Remove everything';
+  String get clearCacheKeepManualHelp => isPt
+      ? 'Você quer manter os jogos adicionados manualmente depois de limpar o cache?'
+      : 'Do you want to keep manually added games after clearing the cache?';
   String get cacheCleared => isPt ? 'Cache limpo.' : 'Cache cleared.';
   String get tierBoughtOnSale => isPt ? 'Tava na promoção!' : 'It was on sale!';
   String get tierBronze => isPt ? 'Bronze' : 'Bronze';
   String get tierSilver => isPt ? 'Prata' : 'Silver';
   String get tierGold => isPt ? 'Ouro' : 'Gold';
   String get tierPerfect => isPt ? 'Perfeição' : 'Perfection';
+  String get obtainabilityBugged => isPt ? 'Bugada' : 'Bugged';
+  String get obtainabilityConditional => isPt ? 'Condicional' : 'Conditional';
+  String get obtainabilityUnobtainable => isPt ? 'Impossível' : 'Unobtainable';
   String get rarityCommon => isPt ? 'Comum' : 'Common';
   String get rarityUncommon => isPt ? 'Incomum' : 'Uncommon';
   String get rarityRare => isPt ? 'Rara' : 'Rare';
