@@ -1,8 +1,12 @@
 package com.example.steam_achievements_apk
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
+import androidx.core.app.NotificationCompat
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -63,9 +67,48 @@ class MainActivity : FlutterActivity() {
                     startActivity(intent)
                     result.success(null)
                 }
+                "showUpdateNotification" -> {
+                    val title = call.argument<String>("title") ?: "Update available"
+                    val text = call.argument<String>("text") ?: "Tap to open the app."
+                    showUpdateNotification(title, text)
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    private fun showUpdateNotification(title: String, text: String) {
+        ensureUpdateNotificationChannel()
+        val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        } ?: Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            UPDATE_NOTIFICATION_ID,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = NotificationCompat.Builder(this, UPDATE_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(UPDATE_NOTIFICATION_ID, notification)
+    }
+
+    private fun ensureUpdateNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        if (manager.getNotificationChannel(UPDATE_CHANNEL_ID) != null) return
+        manager.createNotificationChannel(
+            NotificationChannel(UPDATE_CHANNEL_ID, "Steam Achievements Updates", NotificationManager.IMPORTANCE_DEFAULT)
+        )
     }
 
     private fun areNotificationsAllowed(): Boolean {
@@ -94,5 +137,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val NOTIFICATION_PERMISSION_REQUEST = 2201
+        private const val UPDATE_CHANNEL_ID = "steam_achievements_updates"
+        private const val UPDATE_NOTIFICATION_ID = 2001
     }
 }

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
+import 'app_text.dart';
 import 'models/steam_models.dart';
 import 'screens/games_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/cache_store.dart';
+import 'services/foreground_sync.dart';
+import 'services/update_service.dart';
 
 void main() {
   runApp(const SteamTrophiesApp());
@@ -18,6 +21,8 @@ class SteamTrophiesApp extends StatefulWidget {
 
 class _SteamTrophiesAppState extends State<SteamTrophiesApp> {
   final _cache = CacheStore();
+  final _updateService = UpdateService();
+  final _foregroundSync = ForegroundSync();
   SteamConfig? _config;
   int _syncToken = 0;
 
@@ -29,7 +34,52 @@ class _SteamTrophiesAppState extends State<SteamTrophiesApp> {
 
   Future<void> _loadConfig() async {
     final config = await _cache.loadConfig();
+    if (!mounted) return;
     setState(() => _config = config);
+    _checkForUpdatesOnLaunch(config);
+    if (config.isComplete) {
+      _startAutomaticSyncNotification();
+    }
+  }
+
+  Future<void> _checkForUpdatesOnLaunch(SteamConfig config) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final lastCheck = await _cache.loadLastUpdateCheckMillis();
+    if (now - lastCheck < const Duration(hours: 12).inMilliseconds) return;
+    await _cache.saveLastUpdateCheckMillis(now);
+    try {
+      final update = await _updateService.checkForUpdate();
+      if (update == null || !update.available) return;
+      var notificationsAllowed =
+          await _foregroundSync.areNotificationsAllowed();
+      if (!notificationsAllowed) {
+        notificationsAllowed = await _foregroundSync.requestNotifications();
+      }
+      if (!notificationsAllowed) return;
+      final text = AppText(config.languageCode == 'en'
+          ? AppLanguage.english
+          : AppLanguage.portuguese);
+      await _updateService.showUpdateNotification(
+        update,
+        title: text.updateNotificationTitle,
+        text: text.updateNotificationBody(update.version),
+      );
+    } catch (_) {
+      // Automatic update checks stay silent on network/API failures.
+    }
+  }
+
+  Future<void> _startAutomaticSyncNotification() async {
+    try {
+      var notificationsAllowed =
+          await _foregroundSync.areNotificationsAllowed();
+      if (!notificationsAllowed) {
+        notificationsAllowed = await _foregroundSync.requestNotifications();
+      }
+      if (notificationsAllowed) await _foregroundSync.start();
+    } catch (_) {
+      // Automatic notification sync stays silent if Android refuses the service.
+    }
   }
 
   Future<String?> _openSettings(BuildContext context) async {

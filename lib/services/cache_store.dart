@@ -20,6 +20,8 @@ class CacheStore {
   static const _showRarityTiersKey = 'show_rarity_tiers';
   static const _showObtainabilityBadgesKey = 'show_obtainability_badges';
   static const _goldPerfectGamesKey = 'gold_perfect_games';
+  static const _lastUpdateCheckMillisKey = 'last_update_check_millis';
+  static const _achievementHelpShownKey = 'achievement_help_shown';
 
   Future<SteamConfig> loadConfig() async {
     final prefs = await SharedPreferences.getInstance();
@@ -63,6 +65,26 @@ class CacheStore {
     await prefs.setBool(
         _showObtainabilityBadgesKey, config.showObtainabilityBadges);
     await prefs.setBool(_goldPerfectGamesKey, config.goldPerfectGames);
+  }
+
+  Future<int> loadLastUpdateCheckMillis() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_lastUpdateCheckMillisKey) ?? 0;
+  }
+
+  Future<void> saveLastUpdateCheckMillis(int millis) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_lastUpdateCheckMillisKey, millis);
+  }
+
+  Future<bool> loadAchievementHelpShown() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_achievementHelpShownKey) ?? false;
+  }
+
+  Future<void> saveAchievementHelpShown() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_achievementHelpShownKey, true);
   }
 
   Future<Set<int>> loadHiddenGameAppIds() async {

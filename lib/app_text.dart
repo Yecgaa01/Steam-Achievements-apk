@@ -64,6 +64,7 @@ class AppText {
       : '$unlocked/$total achievements loaded';
   String get tapToLoad =>
       isPt ? 'Toque para carregar conquistas' : 'Tap to load achievements';
+  String get achievements => isPt ? 'Conquistas' : 'Achievements';
   String achievementsProgress(int unlocked, int total) =>
       isPt ? '$unlocked/$total conquistas' : '$unlocked/$total achievements';
   String get released => isPt ? 'Liberada' : 'Unlocked';
@@ -111,6 +112,12 @@ class AppText {
       isPt ? 'Conquista fixada.' : 'Achievement pinned.';
   String get achievementUnpinned =>
       isPt ? 'Conquista desfixada.' : 'Achievement unpinned.';
+  String get achievementHelpTitle =>
+      isPt ? 'Dicas de conquistas' : 'Achievement tips';
+  String get achievementHelpBody => isPt
+      ? 'Toque rapidamente em uma conquista oculta para revelar ou ocultar os detalhes. Segure qualquer conquista para fixá-la no topo. Você pode fixar quantas conquistas quiser.'
+      : 'Tap a hidden achievement to reveal or hide its details. Long-press any achievement to pin it to the top. You can pin as many achievements as you want.';
+  String get gotIt => isPt ? 'Entendi' : 'Got it';
   String get steamIdHelpLink => isPt
       ? 'Abrir página para descobrir SteamID64'
       : 'Open page to find SteamID64';
@@ -231,6 +238,11 @@ class AppText {
       : 'Powered by Steam Web API with additional data from Steam Hunters and Exophase.';
   String get supportOnKofi => isPt ? 'Apoiar no Ko-fi' : 'Support on Ko-fi';
   String get author => isPt ? 'Autor: Moligon' : 'Author: Moligon';
+  String get updateNotificationTitle =>
+      isPt ? 'Atualização disponível' : 'Update available';
+  String updateNotificationBody(String version) => isPt
+      ? 'Toque para abrir o app e instalar a versão $version.'
+      : 'Tap to open the app and install version $version.';
   String get version => isPt ? 'Versão' : 'Version';
   String get checkUpdates =>
       isPt ? 'Verificar atualizações' : 'Check for updates';

@@ -16,7 +16,11 @@ class UpdateInfo {
   final String apkUrl;
   final bool available;
 
-  const UpdateInfo({required this.version, required this.notes, required this.apkUrl, required this.available});
+  const UpdateInfo(
+      {required this.version,
+      required this.notes,
+      required this.apkUrl,
+      required this.available});
 }
 
 class UpdateService {
@@ -24,17 +28,24 @@ class UpdateService {
 
   Future<UpdateInfo?> checkForUpdate() async {
     final local = await PackageInfo.fromPlatform();
-    final uri = Uri.parse('https://api.github.com/repos/$githubOwner/$githubRepo/releases/latest');
-    final response = await http.get(uri, headers: {'Accept': 'application/vnd.github+json'}).timeout(const Duration(seconds: 20));
+    final uri = Uri.parse(
+        'https://api.github.com/repos/$githubOwner/$githubRepo/releases/latest');
+    final response = await http.get(uri, headers: {
+      'Accept': 'application/vnd.github+json'
+    }).timeout(const Duration(seconds: 20));
     if (response.statusCode == 404) return null;
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('GitHub ${response.statusCode}');
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final tag = '${data['tag_name'] ?? ''}'.replaceFirst(RegExp(r'^v', caseSensitive: false), '');
+    final tag = '${data['tag_name'] ?? ''}'
+        .replaceFirst(RegExp(r'^v', caseSensitive: false), '');
     final assets = data['assets'] is List ? data['assets'] as List : const [];
-    final asset = assets.whereType<Map<String, dynamic>>().cast<Map<String, dynamic>?>().firstWhere(
+    final asset = assets
+        .whereType<Map<String, dynamic>>()
+        .cast<Map<String, dynamic>?>()
+        .firstWhere(
           (item) => item?['name'] == apkAssetName,
           orElse: () => null,
         );
@@ -50,7 +61,9 @@ class UpdateService {
   }
 
   Future<String> downloadApk(UpdateInfo update) async {
-    final response = await http.get(Uri.parse(update.apkUrl)).timeout(const Duration(minutes: 5));
+    final response = await http
+        .get(Uri.parse(update.apkUrl))
+        .timeout(const Duration(minutes: 5));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('Download ${response.statusCode}');
     }
@@ -72,6 +85,15 @@ class UpdateService {
     await _channel.invokeMethod<void>('installApk', {'path': path});
   }
 
+  Future<void> showUpdateNotification(UpdateInfo update,
+      {required String title, required String text}) async {
+    await _channel.invokeMethod<void>('showUpdateNotification', {
+      'title': title,
+      'text': text,
+      'version': update.version,
+    });
+  }
+
   int _compareVersions(String remote, String local) {
     final r = _parseVersion(remote);
     final l = _parseVersion(local);
@@ -82,7 +104,12 @@ class UpdateService {
   }
 
   List<int> _parseVersion(String value) {
-    final parts = value.split(RegExp(r'[^0-9]+')).where((part) => part.isNotEmpty).take(3).map(int.parse).toList();
+    final parts = value
+        .split(RegExp(r'[^0-9]+'))
+        .where((part) => part.isNotEmpty)
+        .take(3)
+        .map(int.parse)
+        .toList();
     while (parts.length < 3) {
       parts.add(0);
     }

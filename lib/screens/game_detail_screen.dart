@@ -39,12 +39,33 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
     _showHiddenLocal = widget.config.showHidden;
     _future = _loadAchievements();
     _loadPinnedAchievements();
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _showAchievementHelpOnce());
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _showAchievementHelpOnce() async {
+    if (await _cache.loadAchievementHelpShown()) return;
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(t.achievementHelpTitle),
+        content: Text(t.achievementHelpBody),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(t.gotIt),
+          ),
+        ],
+      ),
+    );
+    await _cache.saveAchievementHelpShown();
   }
 
   Future<void> _loadPinnedAchievements() async {
@@ -269,12 +290,6 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(widget.game.name,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontSize: 24, fontWeight: FontWeight.w900)),
-                            const SizedBox(height: 8),
                             TrophyProgressBar(
                                 value: progress,
                                 height: 10,
