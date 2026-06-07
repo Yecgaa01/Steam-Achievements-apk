@@ -29,8 +29,6 @@
 * Allows a quick long-press on any game to reload its specific progress, hide it, or unhide it
 
 
-&#x20; Author: Moligon (Yecgaa01)
-
 ## Data Sources
 
 
