@@ -46,6 +46,16 @@ class PublicAchievementProgress {
   });
 }
 
+class SteamHuntersAchievementMetadata {
+  final Map<String, String> descriptions;
+  final Map<String, int> obtainability;
+
+  const SteamHuntersAchievementMetadata({
+    required this.descriptions,
+    required this.obtainability,
+  });
+}
+
 class SteamApi {
   static const _apiBase = 'https://api.steampowered.com';
 
@@ -492,52 +502,52 @@ class SteamApi {
       return game.copyWith(
         unlocked: player.values.where((state) => state.achieved).length,
         total: schema.length,
+        latestAchievementUnix: _latestAchievementUnlockTime(player),
         progressLoaded: true,
         hasAchievements: true,
       );
     } on NoAchievementsException {
-      if (allowPublicFallback ||
-          game.manuallyAdded ||
-          game.sourceUrl.isNotEmpty) {
-        try {
-          final publicProgress =
-              await _getPublicAchievementProgress(config, game);
-          if (publicProgress != null && publicProgress.totalCount > 0) {
-            return game.copyWith(
-              unlocked: publicProgress.unlockedCount,
-              total: publicProgress.totalCount,
-              progressLoaded: true,
-              hasAchievements: true,
-            );
-          }
-        } catch (_) {
-          // Keep the game visible if public fallback fails.
+      try {
+        final publicProgress =
+            await _getPublicAchievementProgress(config, game);
+        if (publicProgress != null && publicProgress.totalCount > 0) {
+          return game.copyWith(
+            unlocked: publicProgress.unlockedCount,
+            total: publicProgress.totalCount,
+            progressLoaded: true,
+            hasAchievements: true,
+          );
         }
-        return game.copyWith(progressLoaded: false, hasAchievements: true);
+      } catch (_) {
+        // Fall through to no-achievements state.
       }
       return game.copyWith(
           unlocked: 0, total: 0, progressLoaded: true, hasAchievements: false);
     } catch (_) {
-      if (allowPublicFallback ||
-          game.manuallyAdded ||
-          game.sourceUrl.isNotEmpty) {
-        try {
-          final publicProgress =
-              await _getPublicAchievementProgress(config, game);
-          if (publicProgress != null && publicProgress.totalCount > 0) {
-            return game.copyWith(
-              unlocked: publicProgress.unlockedCount,
-              total: publicProgress.totalCount,
-              progressLoaded: true,
-              hasAchievements: true,
-            );
-          }
-        } catch (_) {
-          // Keep the game visible if public fallback fails.
+      try {
+        final publicProgress =
+            await _getPublicAchievementProgress(config, game);
+        if (publicProgress != null && publicProgress.totalCount > 0) {
+          return game.copyWith(
+            unlocked: publicProgress.unlockedCount,
+            total: publicProgress.totalCount,
+            progressLoaded: true,
+            hasAchievements: true,
+          );
         }
+      } catch (_) {
+        // Mark the scan as completed below so the list does not spin forever.
       }
-      return game;
+      return game.copyWith(progressLoaded: true, hasAchievements: game.hasAchievements);
     }
+  }
+
+  int _latestAchievementUnlockTime(Map<String, PlayerAchievementState> player) {
+    var latest = 0;
+    for (final state in player.values) {
+      if (state.achieved && state.unlockTime > latest) latest = state.unlockTime;
+    }
+    return latest;
   }
 
   Future<List<SteamAchievement>> getAchievementsForGame(
@@ -575,12 +585,15 @@ class SteamApi {
       List<Map<String, dynamic>> schema,
       Map<String, PlayerAchievementState> player,
       {PublicAchievementProgress? publicProgress}) async {
-    final global = await _getGlobalPercentages(appId);
-    final steamHuntersDescriptions = await _getSteamHuntersDescriptions(appId);
-    final obtainability = await _getSteamHuntersObtainability(appId);
-    final steamHuntersGroups = config.separateDlcAchievements
-        ? await _getSteamHuntersGroups(appId)
-        : <String, String>{};
+    final globalFuture = _getGlobalPercentages(appId);
+    final steamHuntersMetadataFuture = _getSteamHuntersMetadata(appId);
+    final steamHuntersGroupsFuture = config.separateDlcAchievements
+        ? _getSteamHuntersGroups(appId)
+        : Future.value(<String, String>{});
+
+    final global = await globalFuture;
+    final steamHuntersMetadata = await steamHuntersMetadataFuture;
+    final steamHuntersGroups = await steamHuntersGroupsFuture;
     final exophaseGroups =
         config.separateDlcAchievements && steamHuntersGroups.isEmpty
             ? await _getExophaseGroups(config, appId)
@@ -597,13 +610,12 @@ class SteamApi {
             name: '${achievement['displayName'] ?? apiName}',
             description: steamDescription.isNotEmpty
                 ? steamDescription
-                : (steamHuntersDescriptions[apiName] ?? ''),
+                : (steamHuntersMetadata.descriptions[apiName] ?? ''),
             icon: '${achievement['icon'] ?? ''}',
             iconGray: '${achievement['icongray'] ?? ''}',
             hidden: boolFromAny(achievement['hidden']),
-            achieved: publicProgress != null
-                ? publicProgress.achievedApiNames.contains(apiName)
-                : (player[apiName]?.achieved ?? false),
+            achieved: (player[apiName]?.achieved ?? false) ||
+                (publicProgress?.achievedApiNames.contains(apiName) ?? false),
             globalPercent: global[apiName],
             unlockTime: player[apiName]?.unlockTime ?? 0,
             groupName: _groupNameForApiName(apiName, groups),
@@ -620,7 +632,7 @@ class SteamApi {
                         '${achievement['displayName'] ?? apiName}')]
                     ?.total ??
                 0,
-            obtainability: obtainability[apiName] ?? 0,
+            obtainability: steamHuntersMetadata.obtainability[apiName] ?? 0,
           );
         })
         .where((achievement) => achievement.apiName.isNotEmpty)
@@ -667,36 +679,31 @@ class SteamApi {
     return achievements.whereType<Map<String, dynamic>>().toList();
   }
 
-  Future<Map<String, String>> _getSteamHuntersDescriptions(int appId) async {
+  Future<SteamHuntersAchievementMetadata> _getSteamHuntersMetadata(
+      int appId) async {
     final uri =
         Uri.parse('https://steamhunters.com/api/apps/$appId/achievements');
     try {
       final data = await _getJsonValue(uri);
       final achievements = data is List ? data : const [];
-      return {
-        for (final item in achievements.whereType<Map<String, dynamic>>())
-          if (item['apiName'] != null &&
-              '${item['description'] ?? ''}'.trim().isNotEmpty)
-            '${item['apiName']}': '${item['description']}'.trim(),
-      };
+      final descriptions = <String, String>{};
+      final obtainability = <String, int>{};
+      for (final item in achievements.whereType<Map<String, dynamic>>()) {
+        final apiName = '${item['apiName'] ?? ''}';
+        if (apiName.isEmpty) continue;
+        final description = '${item['description'] ?? ''}'.trim();
+        if (description.isNotEmpty) descriptions[apiName] = description;
+        obtainability[apiName] = intFromAny(item['obtainability']);
+      }
+      return SteamHuntersAchievementMetadata(
+        descriptions: descriptions,
+        obtainability: obtainability,
+      );
     } catch (_) {
-      return {};
-    }
-  }
-
-  Future<Map<String, int>> _getSteamHuntersObtainability(int appId) async {
-    final uri =
-        Uri.parse('https://steamhunters.com/api/apps/$appId/achievements');
-    try {
-      final data = await _getJsonValue(uri);
-      final achievements = data is List ? data : const [];
-      return {
-        for (final item in achievements.whereType<Map<String, dynamic>>())
-          if (item['apiName'] != null)
-            '${item['apiName']}': intFromAny(item['obtainability']),
-      };
-    } catch (_) {
-      return {};
+      return const SteamHuntersAchievementMetadata(
+        descriptions: {},
+        obtainability: {},
+      );
     }
   }
 

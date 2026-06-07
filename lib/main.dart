@@ -37,9 +37,6 @@ class _SteamTrophiesAppState extends State<SteamTrophiesApp> {
     if (!mounted) return;
     setState(() => _config = config);
     _checkForUpdatesOnLaunch(config);
-    if (config.isComplete) {
-      _startAutomaticSyncNotification();
-    }
   }
 
   Future<void> _checkForUpdatesOnLaunch(SteamConfig config) async {
@@ -66,19 +63,6 @@ class _SteamTrophiesAppState extends State<SteamTrophiesApp> {
       );
     } catch (_) {
       // Automatic update checks stay silent on network/API failures.
-    }
-  }
-
-  Future<void> _startAutomaticSyncNotification() async {
-    try {
-      var notificationsAllowed =
-          await _foregroundSync.areNotificationsAllowed();
-      if (!notificationsAllowed) {
-        notificationsAllowed = await _foregroundSync.requestNotifications();
-      }
-      if (notificationsAllowed) await _foregroundSync.start();
-    } catch (_) {
-      // Automatic notification sync stays silent if Android refuses the service.
     }
   }
 

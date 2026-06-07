@@ -5,6 +5,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/steam_models.dart';
 
 class CacheStore {
+  Future<SharedPreferences>? _prefs;
+
+  Future<SharedPreferences> get _sharedPreferences =>
+      _prefs ??= SharedPreferences.getInstance();
   static const _steamIdKey = 'steam_id_64';
   static const _apiKeyKey = 'steam_api_key';
   static const _showHiddenKey = 'show_hidden_achievements';
@@ -22,9 +26,11 @@ class CacheStore {
   static const _goldPerfectGamesKey = 'gold_perfect_games';
   static const _lastUpdateCheckMillisKey = 'last_update_check_millis';
   static const _achievementHelpShownKey = 'achievement_help_shown';
+  static const _gameSortModeKey = 'game_sort_mode';
+  static const _achievementSortModeKey = 'achievement_sort_mode';
 
   Future<SteamConfig> loadConfig() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     return SteamConfig(
       steamId64: prefs.getString(_steamIdKey) ?? '',
       apiKey: prefs.getString(_apiKeyKey) ?? '',
@@ -47,7 +53,7 @@ class CacheStore {
   }
 
   Future<void> saveConfig(SteamConfig config) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     await prefs.setString(_steamIdKey, config.steamId64.trim());
     await prefs.setString(_apiKeyKey, config.apiKey.trim());
     await prefs.setBool(_showHiddenKey, config.showHidden);
@@ -68,27 +74,47 @@ class CacheStore {
   }
 
   Future<int> loadLastUpdateCheckMillis() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     return prefs.getInt(_lastUpdateCheckMillisKey) ?? 0;
   }
 
   Future<void> saveLastUpdateCheckMillis(int millis) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     await prefs.setInt(_lastUpdateCheckMillisKey, millis);
   }
 
+  Future<String> loadGameSortMode() async {
+    final prefs = await _sharedPreferences;
+    return prefs.getString(_gameSortModeKey) ?? 'alphabetical';
+  }
+
+  Future<void> saveGameSortMode(String value) async {
+    final prefs = await _sharedPreferences;
+    await prefs.setString(_gameSortModeKey, value);
+  }
+
+  Future<String> loadAchievementSortMode() async {
+    final prefs = await _sharedPreferences;
+    return prefs.getString(_achievementSortModeKey) ?? 'original';
+  }
+
+  Future<void> saveAchievementSortMode(String value) async {
+    final prefs = await _sharedPreferences;
+    await prefs.setString(_achievementSortModeKey, value);
+  }
+
   Future<bool> loadAchievementHelpShown() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     return prefs.getBool(_achievementHelpShownKey) ?? false;
   }
 
   Future<void> saveAchievementHelpShown() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     await prefs.setBool(_achievementHelpShownKey, true);
   }
 
   Future<Set<int>> loadHiddenGameAppIds() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     return (prefs.getStringList(_hiddenGameAppIdsKey) ?? const [])
         .map(int.tryParse)
         .whereType<int>()
@@ -96,13 +122,13 @@ class CacheStore {
   }
 
   Future<void> saveHiddenGameAppIds(Set<int> appIds) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     await prefs.setStringList(
         _hiddenGameAppIdsKey, appIds.map((appId) => '$appId').toList()..sort());
   }
 
   Future<Map<String, dynamic>?> getJson(String key) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     final raw = prefs.getString('cache_$key');
     if (raw == null) return null;
     try {
@@ -113,7 +139,7 @@ class CacheStore {
   }
 
   Future<void> setJson(String key, Map<String, dynamic> value) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     await prefs.setString('cache_$key', jsonEncode(value));
   }
 
@@ -182,13 +208,13 @@ class CacheStore {
   }
 
   Future<void> clearCachedAchievements(String steamId64, int appId) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     await prefs.remove('cache_achievements_${steamId64}_$appId');
   }
 
   Future<Set<String>> loadPinnedAchievementIds(
       String steamId64, int appId) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     return (prefs.getStringList('pinned_achievements_${steamId64}_$appId') ??
             const [])
         .where((id) => id.trim().isNotEmpty)
@@ -197,14 +223,14 @@ class CacheStore {
 
   Future<void> savePinnedAchievementIds(
       String steamId64, int appId, Set<String> ids) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     await prefs.setStringList(
         'pinned_achievements_${steamId64}_$appId', ids.toList()..sort());
   }
 
   Future<void> clearProfileCache(String steamId64,
       {bool keepManualGames = false}) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _sharedPreferences;
     final manualGames = keepManualGames
         ? (await loadCachedGames(steamId64))
             .where((game) => game.manuallyAdded || game.sourceUrl.isNotEmpty)
@@ -219,6 +245,7 @@ class CacheStore {
         : <SteamGame>[];
     await prefs.remove('cache_profile_$steamId64');
     await prefs.remove('cache_games_$steamId64');
+    await prefs.remove('sync_full_completed_$steamId64');
     for (final key in prefs
         .getKeys()
         .where((key) => key.startsWith('cache_achievements_${steamId64}_'))

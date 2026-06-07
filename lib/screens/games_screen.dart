@@ -12,6 +12,13 @@ import 'profile_screen.dart';
 
 enum GameSortMode { alphabetical, recent, completion, playtime }
 
+GameSortMode _gameSortModeFromName(String value) {
+  return GameSortMode.values.firstWhere(
+    (mode) => mode.name == value,
+    orElse: () => GameSortMode.alphabetical,
+  );
+}
+
 class GamesScreen extends StatefulWidget {
   final SteamConfig config;
   final Future<String?> Function() onOpenSettings;
@@ -39,8 +46,6 @@ class _GamesScreenState extends State<GamesScreen> {
   bool _typeLoading = false;
   String? _error;
   int _visibleCount = 40;
-  int _progressScanCursor = 0;
-  int _typeScanCursor = 0;
   GameSortMode _sortMode = GameSortMode.alphabetical;
   Set<int> _hiddenGameAppIds = {};
   bool _showOnlyHiddenGames = false;
@@ -54,7 +59,14 @@ class _GamesScreenState extends State<GamesScreen> {
     super.initState();
     _searchController.addListener(() => setState(() {}));
     _scrollController.addListener(_onScroll);
+    _loadSavedSortMode();
     _loadInitial();
+  }
+
+  Future<void> _loadSavedSortMode() async {
+    final saved = await _cache.loadGameSortMode();
+    if (!mounted) return;
+    setState(() => _sortMode = _gameSortModeFromName(saved));
   }
 
   @override
@@ -67,7 +79,6 @@ class _GamesScreenState extends State<GamesScreen> {
         oldWidget.config.hideSoftware != widget.config.hideSoftware;
     if (!profileChanged) {
       if (hideSoftwareChanged && widget.config.hideSoftware) {
-        _typeScanCursor = 0;
         _loadVisibleAppTypes();
       }
       return;
@@ -80,8 +91,6 @@ class _GamesScreenState extends State<GamesScreen> {
       _progressLoading = false;
       _typeLoading = false;
       _visibleCount = 40;
-      _progressScanCursor = 0;
-      _typeScanCursor = 0;
       _showOnlyHiddenGames = false;
     });
     _loadInitial();
@@ -95,7 +104,8 @@ class _GamesScreenState extends State<GamesScreen> {
     super.dispose();
   }
 
-  Future<void> _loadInitial({bool showBlockingLoader = true}) async {
+  Future<void> _loadInitial(
+      {bool showBlockingLoader = true, bool forceVisibleProgress = false}) async {
     if (!widget.config.isComplete) {
       setState(() => _initialLoading = false);
       return;
@@ -143,6 +153,7 @@ class _GamesScreenState extends State<GamesScreen> {
           return game.copyWith(
             unlocked: cached.unlocked,
             total: cached.total,
+            latestAchievementUnix: cached.latestAchievementUnix,
             progressLoaded: cached.progressLoaded,
             hasAchievements: cached.hasAchievements,
             appType: cachedAppType,
@@ -158,12 +169,16 @@ class _GamesScreenState extends State<GamesScreen> {
       setState(() {
         _profile = profile;
         _games = merged;
-        _progressScanCursor = 0;
-        _typeScanCursor = 0;
         _initialLoading = false;
       });
-      await _loadVisibleProgress();
-      await _loadVisibleAppTypes();
+      if (forceVisibleProgress) {
+        _loadRecentProgress();
+      } else {
+        _loadVisibleProgress();
+      }
+      if (widget.config.hideSoftware) {
+        _loadVisibleAppTypes();
+      }
     } catch (error) {
       if (_games.isEmpty && _profile == null) {
         setState(() {
@@ -187,38 +202,22 @@ class _GamesScreenState extends State<GamesScreen> {
     }
   }
 
-  List<SteamGame> _scanCandidates({
-    required int start,
+  List<SteamGame> _visibleScanCandidates({
     required bool Function(SteamGame game) matches,
   }) {
-    if (_games.isEmpty) return const [];
-    final candidates = <SteamGame>[];
-    final safeStart = start.clamp(0, _games.length - 1);
-    for (var offset = 0;
-        offset < _games.length && candidates.length < _batchSize;
-        offset++) {
-      final game = _games[(safeStart + offset) % _games.length];
-      if (matches(game)) candidates.add(game);
-    }
-    return candidates;
-  }
-
-  int _nextScanCursor(List<SteamGame> candidates, int currentCursor) {
-    if (_games.isEmpty || candidates.isEmpty) return 0;
-    final lastIndex =
-        _games.indexWhere((game) => game.appId == candidates.last.appId);
-    if (lastIndex < 0) return currentCursor % _games.length;
-    return (lastIndex + 1) % _games.length;
+    return _filteredAndSorted(_games, includeUnloadedNoAchievementGames: true)
+        .take((_visibleCount + _batchSize).clamp(0, _games.length))
+        .where(matches)
+        .take(_batchSize)
+        .toList();
   }
 
   Future<void> _loadVisibleAppTypes() async {
-    if (_typeLoading) return;
-    final candidates = _scanCandidates(
-      start: _typeScanCursor,
+    if (_typeLoading || !widget.config.hideSoftware) return;
+    final candidates = _visibleScanCandidates(
       matches: (game) => !game.typeLoaded || game.appType == 'unknown',
     );
     if (candidates.isEmpty) return;
-    _typeScanCursor = _nextScanCursor(candidates, _typeScanCursor);
     _typeLoading = true;
     final details =
         await _api.getAppDetails(candidates.map((game) => game.appId).toList());
@@ -240,24 +239,15 @@ class _GamesScreenState extends State<GamesScreen> {
     });
     await _cache.saveCachedGames(widget.config.normalizedSteamId64, _games);
     _typeLoading = false;
-    if (mounted) {
-      setState(() {});
-      if (_games.any((game) => !game.typeLoaded || game.appType == 'unknown')) {
-        Future<void>.delayed(const Duration(milliseconds: 250), () {
-          if (mounted) _loadVisibleAppTypes();
-        });
-      }
-    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadVisibleProgress() async {
     if (_progressLoading) return;
-    final candidates = _scanCandidates(
-      start: _progressScanCursor,
+    final candidates = _visibleScanCandidates(
       matches: (game) => !game.progressLoaded,
     );
     if (candidates.isEmpty) return;
-    _progressScanCursor = _nextScanCursor(candidates, _progressScanCursor);
     _progressLoading = true;
     for (var index = 0; index < candidates.length; index += 3) {
       final chunk =
@@ -274,21 +264,48 @@ class _GamesScreenState extends State<GamesScreen> {
           if (gameIndex >= 0) _games[gameIndex] = hydrated;
         }
       });
-      await _cache.saveCachedGames(widget.config.normalizedSteamId64, _games);
     }
+    await _cache.saveCachedGames(widget.config.normalizedSteamId64, _games);
     _progressLoading = false;
-    if (mounted) {
-      setState(() {});
-      if (_games.any((game) => !game.progressLoaded)) {
-        Future<void>.delayed(const Duration(milliseconds: 250), () {
-          if (mounted) _loadVisibleProgress();
-        });
-      }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadRecentProgress() async {
+    if (_progressLoading) return;
+    final candidates = [..._games]
+      ..sort((a, b) {
+        final lastPlayedCompare = b.lastPlayedUnix.compareTo(a.lastPlayedUnix);
+        if (lastPlayedCompare != 0) return lastPlayedCompare;
+        final recentCompare = b.playtime2Weeks.compareTo(a.playtime2Weeks);
+        if (recentCompare != 0) return recentCompare;
+        return b.playtimeForever.compareTo(a.playtimeForever);
+      });
+    final recentGames = candidates.where((game) => game.hasAchievements).take(20).toList();
+    if (recentGames.isEmpty) return;
+    _progressLoading = true;
+    for (var index = 0; index < recentGames.length; index += 3) {
+      final chunk =
+          recentGames.sublist(index, (index + 3).clamp(0, recentGames.length));
+      final hydratedGames = await Future.wait(chunk.map((game) =>
+          _api.hydrateGameProgress(widget.config, game,
+              allowPublicFallback:
+                  game.manuallyAdded || game.sourceUrl.isNotEmpty)));
+      if (!mounted) return;
+      setState(() {
+        for (final hydrated in hydratedGames) {
+          final gameIndex =
+              _games.indexWhere((item) => item.appId == hydrated.appId);
+          if (gameIndex >= 0) _games[gameIndex] = hydrated;
+        }
+      });
     }
+    await _cache.saveCachedGames(widget.config.normalizedSteamId64, _games);
+    _progressLoading = false;
+    if (mounted) setState(() {});
   }
 
   Future<void> _refresh() async {
-    await _loadInitial(showBlockingLoader: false);
+    await _loadInitial(showBlockingLoader: false, forceVisibleProgress: true);
   }
 
   Future<void> _showManualGameDialog() async {
@@ -586,8 +603,6 @@ class _GamesScreenState extends State<GamesScreen> {
               hasAchievements: true))
           .toList();
       _visibleCount = 40;
-      _progressScanCursor = 0;
-      _typeScanCursor = 0;
     });
     _loadVisibleAppTypes();
     _loadVisibleProgress();
@@ -711,7 +726,9 @@ class _GamesScreenState extends State<GamesScreen> {
                         child: Text(t.isPt ? 'Tempo jogado' : 'Playtime')),
                   ],
                   onChanged: (value) {
-                    if (value != null) setState(() => _sortMode = value);
+                    if (value == null) return;
+                    setState(() => _sortMode = value);
+                    _cache.saveGameSortMode(value.name);
                     _loadVisibleAppTypes();
                     _loadVisibleProgress();
                   },
@@ -801,6 +818,8 @@ class _GamesScreenState extends State<GamesScreen> {
     }).toList();
     if (_sortMode == GameSortMode.recent) {
       games.sort((a, b) {
+        final lastPlayedCompare = b.lastPlayedUnix.compareTo(a.lastPlayedUnix);
+        if (lastPlayedCompare != 0) return lastPlayedCompare;
         final recentCompare = b.playtime2Weeks.compareTo(a.playtime2Weeks);
         if (recentCompare != 0) return recentCompare;
         return b.playtimeForever.compareTo(a.playtimeForever);

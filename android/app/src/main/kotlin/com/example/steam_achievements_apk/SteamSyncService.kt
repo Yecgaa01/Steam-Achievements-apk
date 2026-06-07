@@ -92,6 +92,8 @@ class SteamSyncService : Service() {
                     .put("name", source.optString("name", "App $appId"))
                     .put("playtime_forever", source.optInt("playtime_forever", 0))
                     .put("playtime_2weeks", source.optInt("playtime_2weeks", 0))
+                    .put("rtime_last_played", source.optInt("rtime_last_played", existingGame?.optInt("rtime_last_played", 0) ?: 0))
+                    .put("latest_achievement_unix", existingGame?.optInt("latest_achievement_unix", 0) ?: 0)
                     .put("unlocked", existingGame?.optInt("unlocked", 0) ?: 0)
                     .put("total", existingGame?.optInt("total", 0) ?: 0)
                     .put("progress_loaded", existingGame?.optBoolean("progress_loaded", false) ?: false)
@@ -107,17 +109,35 @@ class SteamSyncService : Service() {
             .putString("flutter.cache_games_$steamId", JSONObject().put("saved_at", nowIso()).put("games", JSONArray(games)).toString())
             .apply()
 
-        val total = games.size
-        for ((index, game) in games.withIndex()) {
+        val fullSyncKey = "flutter.sync_full_completed_$steamId"
+        val fullSyncCompleted = prefs.getBoolean(fullSyncKey, false)
+        val scanCandidates = if (fullSyncCompleted) {
+            games.sortedWith(
+                compareByDescending<JSONObject> { it.optInt("rtime_last_played", 0) }
+                    .thenByDescending { it.optInt("playtime_2weeks", 0) }
+                    .thenByDescending { it.optInt("playtime_forever", 0) }
+            ).take(RECENT_SYNC_LIMIT)
+        } else {
+            games
+        }
+
+        val total = scanCandidates.size
+        for ((index, game) in scanCandidates.withIndex()) {
             val current = index + 1
             updateProgress("Escaneando ${game.optString("name")}", current, total)
-            if (game.optBoolean("progress_loaded", false) && game.optBoolean("has_achievements", true)) continue
+            if (game.optBoolean("progress_loaded", false) &&
+                !game.optBoolean("has_achievements", true) &&
+                game.optInt("playtime_2weeks", 0) == 0
+            ) continue
             hydrateGame(apiKey, steamId, language, game)
             if (current % 5 == 0 || current == total) {
                 prefs.edit()
                     .putString("flutter.cache_games_$steamId", JSONObject().put("saved_at", nowIso()).put("games", JSONArray(games)).toString())
                     .apply()
             }
+        }
+        if (!fullSyncCompleted && total == games.size) {
+            prefs.edit().putBoolean(fullSyncKey, true).apply()
         }
     }
 
@@ -155,14 +175,19 @@ class SteamSyncService : Service() {
             ).optJSONObject("playerstats")?.optJSONArray("achievements") ?: JSONArray()
 
             var unlocked = 0
+            var latestAchievement = 0
             for (i in 0 until player.length()) {
                 val achievement = player.optJSONObject(i) ?: continue
                 val achieved = achievement.opt("achieved")
-                if (achieved == true || achieved == 1 || achieved == "1" || achieved == "true") unlocked++
+                if (achieved == true || achieved == 1 || achieved == "1" || achieved == "true") {
+                    unlocked++
+                    latestAchievement = maxOf(latestAchievement, achievement.optInt("unlocktime", 0))
+                }
             }
 
             game.put("unlocked", unlocked)
                 .put("total", schema.length())
+                .put("latest_achievement_unix", latestAchievement)
                 .put("progress_loaded", true)
                 .put("has_achievements", true)
         } catch (_: NoAchievements) {
@@ -240,5 +265,6 @@ class SteamSyncService : Service() {
     companion object {
         private const val CHANNEL_ID = "steam_achievements_sync"
         private const val NOTIFICATION_ID = 1001
+        private const val RECENT_SYNC_LIMIT = 20
     }
 }

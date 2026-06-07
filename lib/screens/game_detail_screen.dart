@@ -8,6 +8,15 @@ import '../services/steam_api.dart';
 import '../widgets/achievement_tile.dart';
 import '../widgets/progress_bar.dart';
 
+enum AchievementSortMode { original, alphabetical, unlockDate }
+
+AchievementSortMode _achievementSortModeFromName(String value) {
+  return AchievementSortMode.values.firstWhere(
+    (mode) => mode.name == value,
+    orElse: () => AchievementSortMode.original,
+  );
+}
+
 class GameDetailScreen extends StatefulWidget {
   final SteamConfig config;
   final SteamGame game;
@@ -24,8 +33,8 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
   final _searchController = TextEditingController();
   late Future<List<SteamAchievement>> _future;
   bool _showingOfflineCache = false;
-  bool _refreshingCachedAchievements = false;
   String _filter = 'all';
+  AchievementSortMode _sortMode = AchievementSortMode.original;
   Set<String> _pinnedAchievementIds = {};
   late bool _showHiddenLocal;
   AppText get t => AppText(widget.config.languageCode == 'en'
@@ -39,6 +48,7 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
     _showHiddenLocal = widget.config.showHidden;
     _future = _loadAchievements();
     _loadPinnedAchievements();
+    _loadSavedSortMode();
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _showAchievementHelpOnce());
   }
@@ -68,6 +78,12 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
     await _cache.saveAchievementHelpShown();
   }
 
+  Future<void> _loadSavedSortMode() async {
+    final saved = await _cache.loadAchievementSortMode();
+    if (!mounted) return;
+    setState(() => _sortMode = _achievementSortModeFromName(saved));
+  }
+
   Future<void> _loadPinnedAchievements() async {
     final pinned = await _cache.loadPinnedAchievementIds(
         widget.config.normalizedSteamId64, widget.game.appId);
@@ -89,53 +105,93 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
 
   Future<List<SteamAchievement>> _loadAchievements() async {
     try {
-      final fresh =
-          await _api.getAchievementsForGame(widget.config, widget.game);
-      if (fresh.isNotEmpty) {
-        await _cache.saveCachedAchievements(
-            widget.config.normalizedSteamId64, widget.game.appId, fresh);
-        if (mounted) setState(() => _showingOfflineCache = false);
-        return fresh;
-      }
-    } catch (_) {
-      // Fall back to cache below.
-    }
-
-    final cached = await _cache.loadCachedAchievements(
-        widget.config.normalizedSteamId64, widget.game.appId);
-    if (cached.isNotEmpty) {
-      if (mounted) setState(() => _showingOfflineCache = true);
-      _refreshAchievementsInBackground();
-      return cached;
-    }
-    final achievements =
-        await _api.getAchievementsForGame(widget.config, widget.game);
-    if (achievements.isNotEmpty) {
-      await _cache.saveCachedAchievements(
-          widget.config.normalizedSteamId64, widget.game.appId, achievements);
-    }
-    if (mounted) setState(() => _showingOfflineCache = false);
-    return achievements;
-  }
-
-  Future<void> _refreshAchievementsInBackground() async {
-    if (_refreshingCachedAchievements) return;
-    _refreshingCachedAchievements = true;
-    try {
       final achievements =
           await _api.getAchievementsForGame(widget.config, widget.game);
-      if (achievements.isEmpty) return;
-      await _cache.saveCachedAchievements(
-          widget.config.normalizedSteamId64, widget.game.appId, achievements);
-      if (!mounted) return;
-      setState(() {
-        _showingOfflineCache = false;
-        _future = Future.value(achievements);
-      });
+      if (achievements.isNotEmpty) {
+        await _cache.saveCachedAchievements(
+            widget.config.normalizedSteamId64, widget.game.appId, achievements);
+      }
+      if (mounted) setState(() => _showingOfflineCache = false);
+      return achievements;
     } catch (_) {
-      // Keep the existing cached achievements on transient network/API failures.
-    } finally {
-      _refreshingCachedAchievements = false;
+      final cached = await _cache.loadCachedAchievements(
+          widget.config.normalizedSteamId64, widget.game.appId);
+      if (cached.isNotEmpty) {
+        if (mounted) setState(() => _showingOfflineCache = true);
+        return cached;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _showAchievementOptions() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(t.sortAchievements,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800)),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _sortChipForSheet(AchievementSortMode.original,
+                        t.originalOrder, setSheetState),
+                    _sortChipForSheet(
+                        AchievementSortMode.alphabetical, 'A-Z', setSheetState),
+                    _sortChipForSheet(
+                        AchievementSortMode.unlockDate, t.unlockDate, setSheetState),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Text(t.visibility,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800)),
+                const SizedBox(height: 10),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(t.showHidden),
+                  value: _showHiddenLocal,
+                  secondary: const Icon(Icons.visibility_off),
+                  onChanged: (value) {
+                    setState(() => _showHiddenLocal = value);
+                    setSheetState(() {});
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<SteamAchievement> _sortAchievements(List<SteamAchievement> achievements) {
+    final sorted = [...achievements];
+    switch (_sortMode) {
+      case AchievementSortMode.original:
+        return sorted;
+      case AchievementSortMode.alphabetical:
+        sorted.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        return sorted;
+      case AchievementSortMode.unlockDate:
+        sorted.sort((a, b) {
+          final aTime = a.achieved ? a.unlockTime : 0;
+          final bTime = b.achieved ? b.unlockTime : 0;
+          final timeCompare = bTime.compareTo(aTime);
+          if (timeCompare != 0) return timeCompare;
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        });
+        return sorted;
     }
   }
 
@@ -267,7 +323,7 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
               _firstAchievementUnlockTime(achievements);
           final lastAchievementUnlockTime =
               _lastAchievementUnlockTime(achievements);
-          final visibleAchievements = _applyFilter(achievements);
+          final visibleAchievements = _sortAchievements(_applyFilter(achievements));
 
           return CustomScrollView(
             slivers: [
@@ -349,13 +405,18 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
                     decoration: InputDecoration(
                       hintText: t.searchAchievement,
                       prefixIcon: const Icon(Icons.search),
+                      suffixIcon: IconButton(
+                        tooltip: t.sortBy.replaceAll(':', ''),
+                        icon: const Icon(Icons.tune),
+                        onPressed: _showAchievementOptions,
+                      ),
                     ),
                   ),
                 ),
               ),
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
                   child: Wrap(
                     spacing: 8,
                     runSpacing: 8,
@@ -364,13 +425,6 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
                       _chip('unlocked', t.unlocked),
                       _chip('missing', t.missing),
                       _chip('hidden', t.hidden),
-                      FilterChip(
-                        label: Text(t.showHidden),
-                        selected: _showHiddenLocal,
-                        avatar: const Icon(Icons.visibility_off, size: 16),
-                        onSelected: (value) =>
-                            setState(() => _showHiddenLocal = value),
-                      ),
                     ],
                   ),
                 ),
@@ -478,6 +532,19 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
       label: Text(label),
       selected: _filter == value,
       onSelected: (_) => setState(() => _filter = value),
+    );
+  }
+
+  Widget _sortChipForSheet(AchievementSortMode value, String label,
+      void Function(void Function()) setSheetState) {
+    return ChoiceChip(
+      label: Text(label),
+      selected: _sortMode == value,
+      onSelected: (_) {
+        setState(() => _sortMode = value);
+        setSheetState(() {});
+        _cache.saveAchievementSortMode(value.name);
+      },
     );
   }
 

@@ -129,6 +129,12 @@ class AppText {
   String get apiKeyHelpCopied =>
       isPt ? 'Link da API key copiado.' : 'API key link copied.';
   String get hidden => isPt ? 'Ocultas' : 'Hidden';
+  String get sortBy => isPt ? 'Ordenar:' : 'Sort:';
+  String get sortAchievements =>
+      isPt ? 'Ordenar conquistas' : 'Sort achievements';
+  String get visibility => isPt ? 'Visibilidade' : 'Visibility';
+  String get originalOrder => isPt ? 'Original' : 'Original';
+  String get unlockDate => isPt ? 'Data' : 'Date';
   String get hideGame => isPt ? 'Ocultar jogo' : 'Hide game';
   String get showGame => isPt ? 'Reexibir jogo' : 'Show game';
   String get gameHidden => isPt ? 'Jogo ocultado.' : 'Game hidden.';

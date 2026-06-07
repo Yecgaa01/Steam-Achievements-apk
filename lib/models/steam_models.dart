@@ -133,6 +133,7 @@ class SteamGame {
   final int playtimeForever;
   final int playtime2Weeks;
   final int lastPlayedUnix;
+  final int latestAchievementUnix;
   final int unlocked;
   final int total;
   final bool progressLoaded;
@@ -148,6 +149,7 @@ class SteamGame {
     required this.playtimeForever,
     this.playtime2Weeks = 0,
     this.lastPlayedUnix = 0,
+    this.latestAchievementUnix = 0,
     this.unlocked = 0,
     this.total = 0,
     this.progressLoaded = false,
@@ -170,6 +172,7 @@ class SteamGame {
       String? appType,
       bool? typeLoaded,
       int? lastPlayedUnix,
+      int? latestAchievementUnix,
       bool? manuallyAdded,
       String? sourceUrl}) {
     return SteamGame(
@@ -178,6 +181,8 @@ class SteamGame {
       playtimeForever: playtimeForever,
       playtime2Weeks: playtime2Weeks,
       lastPlayedUnix: lastPlayedUnix ?? this.lastPlayedUnix,
+      latestAchievementUnix:
+          latestAchievementUnix ?? this.latestAchievementUnix,
       unlocked: unlocked ?? this.unlocked,
       total: total ?? this.total,
       progressLoaded: progressLoaded ?? this.progressLoaded,
@@ -196,6 +201,7 @@ class SteamGame {
       'playtime_forever': playtimeForever,
       'playtime_2weeks': playtime2Weeks,
       'rtime_last_played': lastPlayedUnix,
+      'latest_achievement_unix': latestAchievementUnix,
       'unlocked': unlocked,
       'total': total,
       'progress_loaded': progressLoaded,
@@ -221,6 +227,7 @@ class SteamGame {
       manuallyAdded: boolFromAny(json['manually_added']),
       sourceUrl: '${json['source_url'] ?? ''}',
       lastPlayedUnix: intFromAny(json['rtime_last_played']),
+      latestAchievementUnix: intFromAny(json['latest_achievement_unix']),
     );
   }
 
