@@ -496,6 +496,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Future<void> _showChangelogDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(t.changelog),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: FutureBuilder<String>(
+            future: _updateService.getLatestReleaseNotes(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  child: Row(
+                    children: [
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(t.loadingChangelog)),
+                    ],
+                  ),
+                );
+              }
+              final notes = snapshot.data?.trim() ?? '';
+              if (snapshot.hasError || notes.isEmpty) {
+                return Text(t.changelogUnavailable);
+              }
+              return SingleChildScrollView(
+                child: _releaseNotesCard(notes),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(t.close),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _releaseNotesCard(String notes) {
     final lines = notes
         .replaceAll('\r\n', '\n')
@@ -586,6 +632,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onPressed: () => _openHelpLink('https://ko-fi.com/moligon'),
           icon: const Icon(Icons.favorite_border),
           label: Text(t.supportOnKofi),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _showChangelogDialog,
+          icon: const Icon(Icons.history),
+          label: Text(t.viewChangelog),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: () => _openHelpLink(
+              'https://github.com/$githubOwner/$githubRepo/releases/latest'),
+          icon: const Icon(Icons.open_in_new),
+          label: Text(t.openLatestRelease),
         ),
         const SizedBox(height: 24),
         FilledButton.icon(

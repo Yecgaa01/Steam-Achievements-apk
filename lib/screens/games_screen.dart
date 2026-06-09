@@ -105,7 +105,8 @@ class _GamesScreenState extends State<GamesScreen> {
   }
 
   Future<void> _loadInitial(
-      {bool showBlockingLoader = true, bool forceVisibleProgress = false}) async {
+      {bool showBlockingLoader = true,
+      bool forceVisibleProgress = false}) async {
     if (!widget.config.isComplete) {
       setState(() => _initialLoading = false);
       return;
@@ -244,9 +245,16 @@ class _GamesScreenState extends State<GamesScreen> {
 
   Future<void> _loadVisibleProgress() async {
     if (_progressLoading) return;
-    final candidates = _visibleScanCandidates(
+    final visibleCandidates = _visibleScanCandidates(
       matches: (game) => !game.progressLoaded,
     );
+    final manualCandidates = _games
+        .where((game) =>
+            game.manuallyAdded &&
+            !game.progressLoaded &&
+            !visibleCandidates.any((item) => item.appId == game.appId))
+        .toList();
+    final candidates = [...visibleCandidates, ...manualCandidates];
     if (candidates.isEmpty) return;
     _progressLoading = true;
     for (var index = 0; index < candidates.length; index += 3) {
@@ -272,15 +280,22 @@ class _GamesScreenState extends State<GamesScreen> {
 
   Future<void> _loadRecentProgress() async {
     if (_progressLoading) return;
-    final candidates = [..._games]
-      ..sort((a, b) {
+    final candidates = [..._games]..sort((a, b) {
         final lastPlayedCompare = b.lastPlayedUnix.compareTo(a.lastPlayedUnix);
         if (lastPlayedCompare != 0) return lastPlayedCompare;
         final recentCompare = b.playtime2Weeks.compareTo(a.playtime2Weeks);
         if (recentCompare != 0) return recentCompare;
         return b.playtimeForever.compareTo(a.playtimeForever);
       });
-    final recentGames = candidates.where((game) => game.hasAchievements).take(20).toList();
+    final manualGames = _games.where((game) => game.manuallyAdded).toList();
+    final recentGames = [
+      ...manualGames,
+      ...candidates
+          .where((game) =>
+              game.hasAchievements &&
+              !manualGames.any((manual) => manual.appId == game.appId))
+          .take(20),
+    ];
     if (recentGames.isEmpty) return;
     _progressLoading = true;
     for (var index = 0; index < recentGames.length; index += 3) {
@@ -403,7 +418,7 @@ class _GamesScreenState extends State<GamesScreen> {
             _manualGameController.clear();
             ScaffoldMessenger.of(this.context)
                 .showSnackBar(SnackBar(content: Text(t.manualGameAdded)));
-            _loadVisibleProgress();
+            _reloadGameProgress(game);
           }
 
           return SafeArea(

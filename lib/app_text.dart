@@ -252,6 +252,16 @@ class AppText {
   String get version => isPt ? 'Versão' : 'Version';
   String get checkUpdates =>
       isPt ? 'Verificar atualizações' : 'Check for updates';
+  String get openLatestRelease =>
+      isPt ? 'Abrir release mais recente' : 'Open latest release';
+  String get changelog => isPt ? 'Histórico de mudanças' : 'Changelog';
+  String get loadingChangelog =>
+      isPt ? 'Carregando changelog...' : 'Loading changelog...';
+  String get changelogUnavailable => isPt
+      ? 'Não foi possível carregar o changelog do GitHub.'
+      : 'Could not load the changelog from GitHub.';
+  String get viewChangelog => isPt ? 'Ver changelog' : 'View changelog';
+  String get close => isPt ? 'Fechar' : 'Close';
   String get checkingUpdates => isPt ? 'Verificando...' : 'Checking...';
   String get updateNotConfigured => isPt
       ? 'Fonte de atualização ainda não configurada.'

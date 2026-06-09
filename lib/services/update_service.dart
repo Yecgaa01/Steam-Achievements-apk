@@ -26,8 +26,7 @@ class UpdateInfo {
 class UpdateService {
   static const _channel = MethodChannel('steam_achievements/update');
 
-  Future<UpdateInfo?> checkForUpdate() async {
-    final local = await PackageInfo.fromPlatform();
+  Future<Map<String, dynamic>?> _getLatestReleaseData() async {
     final uri = Uri.parse(
         'https://api.github.com/repos/$githubOwner/$githubRepo/releases/latest');
     final response = await http.get(uri, headers: {
@@ -37,8 +36,18 @@ class UpdateService {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('GitHub ${response.statusCode}');
     }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
 
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
+  Future<String> getLatestReleaseNotes() async {
+    final data = await _getLatestReleaseData();
+    return '${data?['body'] ?? ''}'.trim();
+  }
+
+  Future<UpdateInfo?> checkForUpdate() async {
+    final local = await PackageInfo.fromPlatform();
+    final data = await _getLatestReleaseData();
+    if (data == null) return null;
     final tag = '${data['tag_name'] ?? ''}'
         .replaceFirst(RegExp(r'^v', caseSensitive: false), '');
     final assets = data['assets'] is List ? data['assets'] as List : const [];

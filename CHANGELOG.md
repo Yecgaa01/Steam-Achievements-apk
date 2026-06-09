@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.1
+
+### Added
+- Added a button in the About tab to open the latest GitHub release for manual installation.
+
+### Changed
+- Updated the app launcher icon to the approved 12B trophy/progress design.
+- Improved refresh behavior for manually added games so achievement info updates from the normal list refresh flow.
+
+### Fixed
+- Fixed manually added games not updating achievement progress in the games list unless using “Reload this game progress”.
+- Fixed games with API progress failures potentially leaving the list card stuck in a loading state.
+
 ## 1.1.0
 
 ### Added
