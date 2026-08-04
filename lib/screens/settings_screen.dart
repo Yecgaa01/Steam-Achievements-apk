@@ -152,7 +152,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (confirmed == true) await widget.onRestoreHiddenGames?.call();
   }
 
-  Future<void> _startForegroundSyncWithPermission(SteamConfig config) async {
+  Future<void> _startForegroundSyncWithPermission(SteamConfig config,
+      {bool refreshUi = true}) async {
     final foregroundSync = ForegroundSync();
     var notificationsAllowed = await foregroundSync.areNotificationsAllowed();
     if (!notificationsAllowed) {
@@ -160,11 +161,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     await foregroundSync.start();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(notificationsAllowed
-            ? t.syncStarted
-            : t.notificationPermissionDenied)));
-    await widget.onSyncRequested?.call(config);
+    if (!notificationsAllowed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(t.notificationPermissionDenied)));
+    }
+    if (refreshUi) {
+      await widget.onSyncRequested?.call(config);
+    }
   }
 
   Future<void> _syncNow() async {
@@ -578,10 +581,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (clearMode == null) return;
+    await CacheStore().saveConfig(config);
     await CacheStore().clearProfileCache(config.normalizedSteamId64,
         keepManualGames: clearMode == 'keep_manual');
     widget.onSaved(config);
-    await widget.onSyncRequested?.call(config);
+    if (config.normalizedApiKey.isNotEmpty) {
+      await _startForegroundSyncWithPermission(config, refreshUi: false);
+    } else {
+      await widget.onSyncRequested?.call(config);
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(t.cacheCleared)));
