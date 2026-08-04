@@ -1,7 +1,7 @@
 name: steam_achievements_apk
-description: Steam achievements viewer inspired by PS trophy apps.
+description: Steam achievements viewer.
 publish_to: 'none'
-version: 1.1.1+46
+version: 2.0.0+71
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -15,6 +15,8 @@ dependencies:
   url_launcher: ^6.3.1
   package_info_plus: ^8.1.2
   path_provider: ^2.1.5
+  flutter_inappwebview: ^6.1.5
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_test:
@@ -23,3 +25,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/pp_guide/pp.json
+    - assets/pp_guide/pst.json

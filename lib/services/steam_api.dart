@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/steam_models.dart';
+import 'steam_session_service.dart';
 
 class SteamStoreSearchResult {
   final int appId;
@@ -21,6 +22,8 @@ class SteamStoreSearchResult {
 
 class NoAchievementsException implements Exception {}
 
+class SteamSessionExpiredException implements Exception {}
+
 class PlayerAchievementState {
   final bool achieved;
   final int unlockTime;
@@ -30,6 +33,7 @@ class PlayerAchievementState {
 
 class PublicAchievementProgress {
   final Set<String> achievedApiNames;
+  final Map<String, int> unlockTimes;
   final int unlockedCount;
   final int totalCount;
   final Map<String, TrophySummary> partialProgress;
@@ -38,6 +42,7 @@ class PublicAchievementProgress {
 
   const PublicAchievementProgress({
     required this.achievedApiNames,
+    this.unlockTimes = const {},
     required this.unlockedCount,
     this.totalCount = 0,
     this.partialProgress = const {},
@@ -60,10 +65,20 @@ class SteamApi {
   static const _apiBase = 'https://api.steampowered.com';
 
   final http.Client _client;
+  final SteamSessionService _sessionService;
 
-  SteamApi({http.Client? client}) : _client = client ?? http.Client();
+  SteamApi({http.Client? client, SteamSessionService? sessionService})
+      : _client = client ?? http.Client(),
+        _sessionService = sessionService ?? SteamSessionService();
+
+  String _steamApiLanguage(SteamConfig config) =>
+      config.languageCode == 'en' ? 'english' : 'brazilian';
 
   Future<SteamProfile> getProfile(SteamConfig config) async {
+    if (config.normalizedApiKey.isEmpty && config.loginMode == 'steamSession') {
+      final profile = await _getSessionProfile(config);
+      if (profile != null) return profile;
+    }
     final uri =
         Uri.parse('$_apiBase/ISteamUser/GetPlayerSummaries/v0002/').replace(
       queryParameters: {
@@ -86,6 +101,10 @@ class SteamApi {
   }
 
   Future<List<SteamGame>> getOwnedGames(SteamConfig config) async {
+    if (config.normalizedApiKey.isEmpty && config.loginMode == 'steamSession') {
+      final games = await _getSessionOwnedGames(config);
+      if (games.isNotEmpty) return games;
+    }
     final uri =
         Uri.parse('$_apiBase/IPlayerService/GetOwnedGames/v0001/').replace(
       queryParameters: {
@@ -106,6 +125,129 @@ class SteamApi {
         .toList();
     parsed.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return parsed;
+  }
+
+  Future<List<SteamGame>> getRecentlyPlayedGames(SteamConfig config) async {
+    if (config.normalizedApiKey.isEmpty) return const [];
+    final uri =
+        Uri.parse('$_apiBase/IPlayerService/GetRecentlyPlayedGames/v0001/')
+            .replace(
+      queryParameters: {
+        'key': config.normalizedApiKey,
+        'steamid': config.normalizedSteamId64,
+        'format': 'json',
+      },
+    );
+    final data = await _getJson(uri);
+    final games =
+        ((data['response'] as Map<String, dynamic>?)?['games'] as List?) ??
+            const [];
+    return games
+        .whereType<Map<String, dynamic>>()
+        .map(SteamGame.fromJson)
+        .toList();
+  }
+
+  bool _looksLikeSteamLoginPage(String body) {
+    final lower = body.toLowerCase();
+    return lower.contains('/login/home') ||
+        lower.contains('steamcommunity.com/login') ||
+        lower.contains('name="username"') &&
+            lower.contains('name="password"') ||
+        lower.contains('enable javascript and cookies');
+  }
+
+  Future<http.Response> _getWithFreshSession(Uri uri,
+      {Duration timeout = const Duration(seconds: 20)}) async {
+    final headers = await _sessionService.getAuthenticatedHeaders();
+    final response = await _client.get(uri, headers: headers).timeout(timeout);
+    if (_looksLikeSteamLoginPage(response.body)) {
+      await _sessionService.keepAliveSession();
+      await _sessionService.markSessionExpired();
+      throw SteamSessionExpiredException();
+    }
+    return response;
+  }
+
+  Future<SteamProfile?> _getSessionProfile(SteamConfig config) async {
+    final uri = Uri.parse(
+        'https://steamcommunity.com/profiles/${config.normalizedSteamId64}/?xml=1');
+    final response = await _getWithFreshSession(uri);
+    if (response.statusCode < 200 || response.statusCode >= 300) return null;
+    if (_looksLikeSteamLoginPage(response.body)) return null;
+    final body = response.body;
+    final name = _decodeHtml(_stripHtml(RegExp(
+                r'<steamID><!\[CDATA\[([\s\S]*?)\]\]></steamID>',
+                caseSensitive: false)
+            .firstMatch(body)
+            ?.group(1) ??
+        ''));
+    final avatar = _decodeHtml(_stripHtml(RegExp(
+                r'<avatarFull><!\[CDATA\[([\s\S]*?)\]\]></avatarFull>',
+                caseSensitive: false)
+            .firstMatch(body)
+            ?.group(1) ??
+        ''));
+    return SteamProfile(
+      steamId64: config.normalizedSteamId64,
+      personaName: name.isEmpty ? 'Steam profile' : name,
+      avatarUrl: avatar,
+    );
+  }
+
+  Future<List<SteamGame>> _getSessionOwnedGames(SteamConfig config) async {
+    final uri = Uri.parse(
+        'https://steamcommunity.com/profiles/${config.normalizedSteamId64}/games/?tab=all&xml=1');
+    final response = await _getWithFreshSession(
+      uri,
+      timeout: const Duration(seconds: 25),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return const [];
+    }
+    if (_looksLikeSteamLoginPage(response.body)) return const [];
+    final games = <SteamGame>[];
+    final blocks = RegExp(r'<game>[\s\S]*?</game>', caseSensitive: false)
+        .allMatches(response.body)
+        .map((match) => match.group(0) ?? '');
+    for (final block in blocks) {
+      final appId = int.tryParse(
+              RegExp(r'<appID>(\d+)</appID>', caseSensitive: false)
+                      .firstMatch(block)
+                      ?.group(1) ??
+                  '') ??
+          0;
+      if (appId == 0) continue;
+      final name = _decodeHtml(_stripHtml(RegExp(
+                  r'<name><!\[CDATA\[([\s\S]*?)\]\]></name>',
+                  caseSensitive: false)
+              .firstMatch(block)
+              ?.group(1) ??
+          'App $appId'));
+      final playtime2Weeks = int.tryParse(RegExp(
+                      r'<hoursLast2Weeks>([\d.]+)</hoursLast2Weeks>',
+                      caseSensitive: false)
+                  .firstMatch(block)
+                  ?.group(1)
+                  ?.replaceAll('.', '') ??
+              '') ??
+          0;
+      final playtimeForever = int.tryParse(RegExp(
+                      r'<hoursOnRecord>([\d.]+)</hoursOnRecord>',
+                      caseSensitive: false)
+                  .firstMatch(block)
+                  ?.group(1)
+                  ?.replaceAll('.', '') ??
+              '') ??
+          0;
+      games.add(SteamGame(
+        appId: appId,
+        name: name,
+        playtimeForever: playtimeForever * 60,
+        playtime2Weeks: playtime2Weeks * 60,
+      ));
+    }
+    return games;
   }
 
   Future<Map<int, SteamAppDetails>> getAppDetails(List<int> appIds) async {
@@ -149,10 +291,13 @@ class SteamApi {
         final description = '${genre['description'] ?? ''}'.toLowerCase();
         return id == '57' || description == 'utilities';
       });
+      final headerImageUrl =
+          '${details['header_image'] ?? details['capsule_image'] ?? ''}';
       return SteamAppDetails(
           appId: appId,
           type: type.isEmpty ? 'unknown' : type,
-          utility: utility);
+          utility: utility,
+          headerImageUrl: headerImageUrl);
     } catch (_) {
       return SteamAppDetails(appId: appId, type: 'unknown');
     }
@@ -342,9 +487,17 @@ class SteamApi {
     );
   }
 
-  Uri? _publicAchievementUri(SteamConfig config, SteamGame game) {
+  Future<Uri?> _publicAchievementUri(SteamConfig config, SteamGame game) async {
     final sourceUri = Uri.tryParse(game.sourceUrl);
-    if (sourceUri != null && sourceUri.hasScheme) return sourceUri;
+    if (game.sourceUrl.isNotEmpty) return sourceUri;
+    if (config.loginMode == 'steamSession') {
+      final profileUri = await _sessionService.loadProfileUri();
+      final basePath = profileUri.path.endsWith('/')
+          ? profileUri.path.substring(0, profileUri.path.length - 1)
+          : profileUri.path;
+      return Uri.parse(
+          'https://steamcommunity.com$basePath/stats/${game.appId}/achievements/');
+    }
     if (config.normalizedSteamId64.isEmpty) return null;
     return Uri.parse(
         'https://steamcommunity.com/profiles/${config.normalizedSteamId64}/stats/${game.appId}/achievements/');
@@ -353,17 +506,76 @@ class SteamApi {
   Future<PublicAchievementProgress?> _getPublicAchievementProgress(
       SteamConfig config, SteamGame game,
       {List<Map<String, dynamic>>? schema}) async {
-    final sourceUri = _publicAchievementUri(config, game);
+    final sourceUri = await _publicAchievementUri(config, game);
     if (sourceUri == null) return null;
-    final response = await _client.get(
-      sourceUri,
-      headers: const {
-        'User-Agent': 'Mozilla/5.0 SteamAchievements/1.0',
-        'Accept': 'text/html,application/xhtml+xml'
-      },
-    ).timeout(const Duration(seconds: 20));
-    if (response.statusCode < 200 || response.statusCode >= 300) return null;
-    if (!_hasAchievementMarkers(response.body)) return null;
+    final profileUri = await _sessionService.loadProfileUri();
+    final diagnostics = <String>[
+      'privateAchievements=start appId=${game.appId}',
+      'privateAchievements.request=$sourceUri',
+      'privateAchievements.profilePath=${profileUri.path}',
+    ];
+    final headers = <String, String>{
+      'User-Agent': SteamSessionService.chromeAndroidUserAgent,
+      'Accept':
+          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    };
+    if (config.loginMode == 'steamSession') {
+      headers.addAll(await _sessionService.getAuthenticatedHeaders());
+    }
+    var response = await _client
+        .get(
+          sourceUri,
+          headers: headers,
+        )
+        .timeout(const Duration(seconds: 20));
+    diagnostics.add('privateAchievements.statusCode=${response.statusCode}');
+    diagnostics.add(
+        'privateAchievements.finalUrl=${response.request?.url ?? sourceUri}');
+    diagnostics.add('privateAchievements.bodyLength=${response.body.length}');
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      await _sessionService.savePrivateAchievementsLog(diagnostics.join('\n'));
+      return null;
+    }
+    var looksLogin = _looksLikeSteamLoginPage(response.body);
+    diagnostics.add('privateAchievements.looksLogin=$looksLogin');
+    if (looksLogin && config.loginMode == 'steamSession') {
+      diagnostics.add('privateAchievements.autoRefresh=start');
+      final refreshed =
+          await _sessionService.refreshWebCookiesFromSteamRefresh();
+      diagnostics
+          .add('privateAchievements.autoRefreshStatus=${refreshed.status}');
+      if (refreshed.success) {
+        headers
+          ..clear()
+          ..addAll(<String, String>{
+            'User-Agent': SteamSessionService.chromeAndroidUserAgent,
+            'Accept':
+                'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+          })
+          ..addAll(
+              await _sessionService.getAuthenticatedHeaders(refresh: false));
+        response = await _client
+            .get(sourceUri, headers: headers)
+            .timeout(const Duration(seconds: 20));
+        diagnostics
+            .add('privateAchievements.retryStatusCode=${response.statusCode}');
+        diagnostics
+            .add('privateAchievements.retryBodyLength=${response.body.length}');
+        looksLogin = _looksLikeSteamLoginPage(response.body);
+        diagnostics.add('privateAchievements.retryLooksLogin=$looksLogin');
+      }
+    }
+    if (looksLogin) {
+      await _sessionService.savePrivateAchievementsLog(diagnostics.join('\n'));
+      await _sessionService.markSessionExpired();
+      throw SteamSessionExpiredException();
+    }
+    final hasMarkers = _hasAchievementMarkers(response.body);
+    diagnostics.add('privateAchievements.hasAchievementMarkers=$hasMarkers');
+    if (!hasMarkers) {
+      await _sessionService.savePrivateAchievementsLog(diagnostics.join('\n'));
+      return null;
+    }
 
     final pageProgressMatch = RegExp(
             r'(\d+)\s+of\s+(\d+)\s+\([^)]*\)\s+achievements\s+earned',
@@ -377,14 +589,10 @@ class SteamApi {
         : int.tryParse(pageProgressMatch.group(2) ?? '') ?? 0;
 
     schema ??= await _getAchievementSchema(config, game.appId);
-    final matchingSchema = config.languageCode == 'en'
-        ? schema
-        : <Map<String, dynamic>>[
-            ...schema,
-            ...await _getAchievementSchema(
-                config.copyWith(languageCode: 'en'), game.appId),
-          ];
+    final matchingSchema =
+        await _combinedAchievementSchema(config, game.appId, schema);
     final iconToApi = <String, String>{};
+    final duplicateIcons = <String>{};
     final nameToApi = <String, String>{};
     for (final achievement in matchingSchema) {
       final apiName = '${achievement['name'] ?? ''}';
@@ -393,12 +601,23 @@ class SteamApi {
       final grayFile = _imageFileName('${achievement['icongray'] ?? ''}');
       final name =
           _normalizeMatchText('${achievement['displayName'] ?? apiName}');
-      if (iconFile.isNotEmpty) iconToApi[iconFile] = apiName;
-      if (grayFile.isNotEmpty) iconToApi[grayFile] = apiName;
+      for (final iconFileName in [iconFile, grayFile]) {
+        if (iconFileName.isEmpty) continue;
+        if (iconToApi.containsKey(iconFileName) &&
+            iconToApi[iconFileName] != apiName) {
+          duplicateIcons.add(iconFileName);
+        } else {
+          iconToApi[iconFileName] = apiName;
+        }
+      }
       if (name.isNotEmpty) nameToApi[name] = apiName;
+    }
+    for (final iconFileName in duplicateIcons) {
+      iconToApi.remove(iconFileName);
     }
 
     final achieved = <String>{};
+    final unlockTimes = <String, int>{};
     var unlockedCount = 0;
     final blocks = RegExp(
             r'<div[^>]+class="[^"]*achieveRow[^"]*"[\s\S]*?(?=<div[^>]+class="[^"]*achieveRow|<br><br><br>|</body>|$)',
@@ -414,6 +633,29 @@ class SteamApi {
             .allMatches(response.body)
             .map((match) => match.group(0) ?? '')
             .toList();
+    diagnostics.add('privateAchievements.blocks=${blocks.length}');
+    diagnostics.add('privateAchievements.scanBlocks=${scanBlocks.length}');
+    final lowerBody = response.body.toLowerCase();
+    diagnostics.add(
+        'privateAchievements.term.unlocked=${RegExp('unlocked').allMatches(lowerBody).length}');
+    diagnostics.add(
+        'privateAchievements.term.achieved=${RegExp('achieved').allMatches(lowerBody).length}');
+    diagnostics.add(
+        'privateAchievements.term.achieveunlock=${RegExp('achieveunlock').allMatches(lowerBody).length}');
+    diagnostics.add(
+        'privateAchievements.term.unlock_time=${RegExp('unlock_time').allMatches(lowerBody).length}');
+    for (var index = 0; index < scanBlocks.length && index < 3; index++) {
+      final block = scanBlocks[index];
+      final classValues = RegExp(r'class="([^"]+)"', caseSensitive: false)
+          .allMatches(block)
+          .map((match) => match.group(1) ?? '')
+          .where((value) => value.isNotEmpty)
+          .take(6)
+          .join(' | ');
+      final text = _shortDebugText(_decodeHtml(_stripHtml(block)));
+      diagnostics.add('privateAchievements.block$index.classes=$classValues');
+      diagnostics.add('privateAchievements.block$index.text=$text');
+    }
 
     final partialProgress = <String, TrophySummary>{};
     final partialProgressByTitle = <String, TrophySummary>{};
@@ -426,10 +668,11 @@ class SteamApi {
               .firstMatch(block);
       final title = _decodeHtml(_stripHtml(titleMatch?.group(1) ?? ''));
       final normalizedTitle = _normalizeMatchText(title);
-      final imageApi =
-          iconToApi[_imageFileName(_decodeHtml(imageMatch?.group(1) ?? ''))];
       final titleApi = nameToApi[normalizedTitle];
-      final apiName = imageApi ?? titleApi;
+      final imageApi = titleApi == null
+          ? iconToApi[_imageFileName(_decodeHtml(imageMatch?.group(1) ?? ''))]
+          : null;
+      final apiName = titleApi ?? imageApi;
       if (apiName != null && apiName.isNotEmpty) {
         final progressMatch =
             RegExp(r'(\d+)\s*/\s*(\d+)').firstMatch(_stripHtml(block));
@@ -452,12 +695,21 @@ class SteamApi {
           RegExp(r'<h5[^>]*>([\s\S]*?)</h5>', caseSensitive: false)
               .firstMatch(block);
       final imageUrl = _decodeHtml(imageMatch?.group(1) ?? '');
-      final isUnlocked =
-          RegExp(r'Unlocked\s', caseSensitive: false).hasMatch(block);
+      final isUnlocked = _isPublicAchievementUnlocked(block);
       if (apiName == null &&
           !isUnlocked &&
           !partialProgressByTitle.containsKey(normalizedTitle)) {
         continue;
+      }
+      final unlockTime =
+          isUnlocked ? _parsePublicAchievementUnlockTime(block) : 0;
+      if (isUnlocked && unlockTime > 0 && diagnostics.length < 18) {
+        diagnostics.add(
+            'privateAchievements.dateRaw=${_shortDebugText(_decodeHtml(_stripHtml(block)))}');
+        diagnostics.add('privateAchievements.dateUnix=$unlockTime');
+      }
+      if (apiName != null && apiName.isNotEmpty && unlockTime > 0) {
+        unlockTimes[apiName] = unlockTime;
       }
       if (title.isNotEmpty) {
         final progress = partialProgressByTitle[normalizedTitle];
@@ -470,6 +722,7 @@ class SteamApi {
           iconGray: imageUrl,
           hidden: false,
           achieved: isUnlocked,
+          unlockTime: unlockTime,
           progressCurrent: progress?.unlocked ?? 0,
           progressTotal: progress?.total ?? 0,
         ));
@@ -481,8 +734,15 @@ class SteamApi {
       if (apiName != null && apiName.isNotEmpty) achieved.add(apiName);
     }
 
+    diagnostics.add('privateAchievements.pageUnlocked=$pageUnlocked');
+    diagnostics.add('privateAchievements.pageTotal=$pageTotal');
+    diagnostics.add('privateAchievements.unlockedParsed=$unlockedCount');
+    diagnostics.add('privateAchievements.matchedUnlocked=${achieved.length}');
+    await _sessionService.savePrivateAchievementsLog(diagnostics.join('\n'));
+
     return PublicAchievementProgress(
       achievedApiNames: achieved,
+      unlockTimes: unlockTimes,
       unlockedCount: unlockedCount > 0 ? unlockedCount : pageUnlocked,
       totalCount: pageTotal,
       partialProgress: partialProgress,
@@ -493,23 +753,69 @@ class SteamApi {
 
   Future<SteamGame> hydrateGameProgress(SteamConfig config, SteamGame game,
       {bool allowPublicFallback = false}) async {
+    if (config.loginMode == 'steamSession') {
+      try {
+        final schema = await _getAchievementSchema(config, game.appId);
+        final publicProgress =
+            await _getPublicAchievementProgress(config, game, schema: schema);
+        if (publicProgress != null && publicProgress.totalCount > 0) {
+          return game.copyWith(
+            unlocked: publicProgress.unlockedCount,
+            total: publicProgress.totalCount,
+            latestAchievementUnix: publicProgress.unlockTimes.values.fold<int>(
+                game.latestAchievementUnix,
+                (latest, value) => value > latest ? value : latest),
+            progressLoaded: true,
+            hasAchievements: true,
+          );
+        }
+        if (schema.isEmpty) {
+          return game.copyWith(
+            unlocked: 0,
+            total: 0,
+            progressLoaded: true,
+            hasAchievements: false,
+          );
+        }
+        return game.copyWith(
+          total: schema.length,
+          progressLoaded: true,
+          hasAchievements: true,
+        );
+      } on SteamSessionExpiredException {
+        rethrow;
+      } catch (_) {
+        return game.copyWith(progressLoaded: false);
+      }
+    }
+
     try {
-      final schema = await _getAchievementSchema(config, game.appId);
-      if (schema.isEmpty) {
+      final player = await _getPlayerAchievements(config, game.appId);
+      if (player.isEmpty) {
         throw NoAchievementsException();
       }
-      final player = await _getPlayerAchievements(config, game.appId);
       return game.copyWith(
         unlocked: player.values.where((state) => state.achieved).length,
-        total: schema.length,
+        total: player.length,
         latestAchievementUnix: _latestAchievementUnlockTime(player),
         progressLoaded: true,
         hasAchievements: true,
       );
     } on NoAchievementsException {
+      if (!allowPublicFallback) {
+        return game.copyWith(
+            unlocked: 0,
+            total: 0,
+            progressLoaded: true,
+            hasAchievements: false);
+      }
       try {
+        final schema = await _getAchievementSchema(config, game.appId);
+        if (schema.isEmpty) {
+          throw NoAchievementsException();
+        }
         final publicProgress =
-            await _getPublicAchievementProgress(config, game);
+            await _getPublicAchievementProgress(config, game, schema: schema);
         if (publicProgress != null && publicProgress.totalCount > 0) {
           return game.copyWith(
             unlocked: publicProgress.unlockedCount,
@@ -518,12 +824,20 @@ class SteamApi {
             hasAchievements: true,
           );
         }
+        return game.copyWith(
+            unlocked: 0,
+            total: schema.length,
+            progressLoaded: true,
+            hasAchievements: true);
       } catch (_) {
         // Fall through to no-achievements state.
       }
       return game.copyWith(
           unlocked: 0, total: 0, progressLoaded: true, hasAchievements: false);
     } catch (_) {
+      if (!allowPublicFallback) {
+        return game.copyWith(progressLoaded: false);
+      }
       try {
         final publicProgress =
             await _getPublicAchievementProgress(config, game);
@@ -538,14 +852,16 @@ class SteamApi {
       } catch (_) {
         // Mark the scan as completed below so the list does not spin forever.
       }
-      return game.copyWith(progressLoaded: true, hasAchievements: game.hasAchievements);
+      return game.copyWith(progressLoaded: false);
     }
   }
 
   int _latestAchievementUnlockTime(Map<String, PlayerAchievementState> player) {
     var latest = 0;
     for (final state in player.values) {
-      if (state.achieved && state.unlockTime > latest) latest = state.unlockTime;
+      if (state.achieved && state.unlockTime > latest) {
+        latest = state.unlockTime;
+      }
     }
     return latest;
   }
@@ -585,39 +901,67 @@ class SteamApi {
       List<Map<String, dynamic>> schema,
       Map<String, PlayerAchievementState> player,
       {PublicAchievementProgress? publicProgress}) async {
+    final communityDescriptionsFuture = config.languageCode == 'en'
+        ? Future.value(<String, String>{})
+        : _getCommunityDescriptionsByTitle(appId);
     final globalFuture = _getGlobalPercentages(appId);
+    final globalIconsFuture = _getGlobalAchievementIconsByTitle(appId);
     final steamHuntersMetadataFuture = _getSteamHuntersMetadata(appId);
     final steamHuntersGroupsFuture = config.separateDlcAchievements
         ? _getSteamHuntersGroups(appId)
         : Future.value(<String, String>{});
 
+    final communityDescriptions = await communityDescriptionsFuture;
     final global = await globalFuture;
+    final globalIcons = await globalIconsFuture;
     final steamHuntersMetadata = await steamHuntersMetadataFuture;
     final steamHuntersGroups = await steamHuntersGroupsFuture;
+    final inferredGroups = {
+      for (final entry in steamHuntersMetadata.descriptions.entries)
+        if (entry.key.startsWith('__group__'))
+          entry.key.substring('__group__'.length): entry.value
+    };
+    final primaryGroups =
+        steamHuntersGroups.isNotEmpty ? steamHuntersGroups : inferredGroups;
     final exophaseGroups =
-        config.separateDlcAchievements && steamHuntersGroups.isEmpty
+        config.separateDlcAchievements && primaryGroups.isEmpty
             ? await _getExophaseGroups(config, appId)
             : <String, String>{};
-    final groups =
-        steamHuntersGroups.isNotEmpty ? steamHuntersGroups : exophaseGroups;
+    final groups = primaryGroups.isNotEmpty ? primaryGroups : exophaseGroups;
 
     return schema
         .map((achievement) {
           final apiName = '${achievement['name'] ?? ''}';
+          final displayName = '${achievement['displayName'] ?? apiName}';
           final steamDescription = '${achievement['description'] ?? ''}';
+          final hidden = boolFromAny(achievement['hidden']);
+          final fallbackHiddenDescription =
+              hidden ? (steamHuntersMetadata.descriptions[apiName] ?? '') : '';
+          final communityDescription =
+              communityDescriptions[_normalizeMatchText(displayName)] ?? '';
+          final primaryDescription = communityDescription.isNotEmpty
+              ? communityDescription
+              : steamDescription;
           return SteamAchievement(
             apiName: apiName,
-            name: '${achievement['displayName'] ?? apiName}',
-            description: steamDescription.isNotEmpty
-                ? steamDescription
-                : (steamHuntersMetadata.descriptions[apiName] ?? ''),
-            icon: '${achievement['icon'] ?? ''}',
-            iconGray: '${achievement['icongray'] ?? ''}',
-            hidden: boolFromAny(achievement['hidden']),
-            achieved: (player[apiName]?.achieved ?? false) ||
-                (publicProgress?.achievedApiNames.contains(apiName) ?? false),
+            name: displayName,
+            description: primaryDescription.isNotEmpty
+                ? primaryDescription
+                : fallbackHiddenDescription,
+            icon: ('${achievement['icon'] ?? ''}'.trim().isNotEmpty
+                ? '${achievement['icon'] ?? ''}'
+                : (globalIcons[_normalizeMatchText(displayName)] ?? '')),
+            iconGray: ('${achievement['icongray'] ?? ''}'.trim().isNotEmpty
+                ? '${achievement['icongray'] ?? ''}'
+                : (globalIcons[_normalizeMatchText(displayName)] ?? '')),
+            hidden: hidden,
+            achieved: player.isNotEmpty
+                ? (player[apiName]?.achieved ?? false)
+                : (publicProgress?.achievedApiNames.contains(apiName) ?? false),
             globalPercent: global[apiName],
-            unlockTime: player[apiName]?.unlockTime ?? 0,
+            unlockTime: (player[apiName]?.unlockTime ?? 0) > 0
+                ? player[apiName]!.unlockTime
+                : (publicProgress?.unlockTimes[apiName] ?? 0),
             groupName: _groupNameForApiName(apiName, groups),
             progressCurrent:
                 publicProgress?.partialProgress[apiName]?.unlocked ??
@@ -661,14 +1005,365 @@ class SteamApi {
     return normalized.isEmpty ? '0' : normalized;
   }
 
+  Future<Map<String, String>> _getCommunityDescriptionsByTitle(
+      int appId) async {
+    final result = <String, String>{};
+    for (final language in const ['brazilian', 'portuguese']) {
+      try {
+        final uri = Uri.parse(
+            'https://steamcommunity.com/stats/$appId/achievements/?l=$language');
+        final response =
+            await _client.get(uri).timeout(const Duration(seconds: 10));
+        if (response.statusCode < 200 || response.statusCode >= 300) continue;
+        result.addAll(_parseCommunityDescriptionsByTitle(response.body));
+      } catch (_) {}
+    }
+    return result;
+  }
+
+  Future<Map<String, String>> _getGlobalAchievementIconsByTitle(
+      int appId) async {
+    try {
+      final uri = Uri.parse(
+          'https://steamcommunity.com/stats/$appId/achievements/?l=english');
+      final response =
+          await _client.get(uri).timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return const {};
+      }
+      return _parseCommunityIconsByTitle(response.body);
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Map<String, String> _parseCommunityIconsByTitle(String html) {
+    final result = <String, String>{};
+    final rowPattern = RegExp(
+      r'<div[^>]*class="[^"]*(?:achieveRow|achieveTxt)[^"]*"[\s\S]*?(?=<div[^>]*class="[^"]*(?:achieveRow|achieveTxt)[^"]*"|</body>)',
+      caseSensitive: false,
+    );
+    for (final rowMatch in rowPattern.allMatches(html)) {
+      final block = rowMatch.group(0) ?? '';
+      final titleMatch =
+          RegExp(r'<h3[^>]*>([\s\S]*?)</h3>', caseSensitive: false)
+              .firstMatch(block);
+      final imageMatch = RegExp(r'<img[^>]+src="([^"]+)"', caseSensitive: false)
+          .firstMatch(block);
+      final title = _decodeHtml(_stripHtml(titleMatch?.group(1) ?? '').trim());
+      final imageUrl = _decodeHtml(imageMatch?.group(1) ?? '').trim();
+      if (title.isNotEmpty && imageUrl.isNotEmpty) {
+        result[_normalizeMatchText(title)] = imageUrl;
+      }
+    }
+    return result;
+  }
+
+  Map<String, String> _parseCommunityDescriptionsByTitle(String html) {
+    final result = <String, String>{};
+    final rowPattern = RegExp(
+      r'<div[^>]*class="[^"]*(?:achieveRow|achieveTxt)[^"]*"[\s\S]*?(?=<div[^>]*class="[^"]*(?:achieveRow|achieveTxt)[^"]*"|</body>)',
+      caseSensitive: false,
+    );
+    final headingPattern = RegExp(
+      r'<h3[^>]*>([\s\S]*?)</h3>([\s\S]*?)(?=<h3[^>]*>|</body>)',
+      caseSensitive: false,
+    );
+
+    void addFromBlock(String block) {
+      final titleMatch =
+          RegExp(r'<h3[^>]*>([\s\S]*?)</h3>', caseSensitive: false)
+              .firstMatch(block);
+      final descriptionMatch =
+          RegExp(r'<h5[^>]*>([\s\S]*?)</h5>', caseSensitive: false)
+              .firstMatch(block);
+      if (titleMatch == null || descriptionMatch == null) return;
+      final title = _decodeHtml(_stripHtml(titleMatch.group(1) ?? '').trim());
+      final description =
+          _decodeHtml(_stripHtml(descriptionMatch.group(1) ?? '').trim());
+      if (title.isEmpty || description.isEmpty || title == description) return;
+      result[_normalizeMatchText(title)] = description;
+    }
+
+    for (final rowMatch in rowPattern.allMatches(html)) {
+      addFromBlock(rowMatch.group(0) ?? '');
+    }
+    if (result.isEmpty) {
+      for (final headingMatch in headingPattern.allMatches(html)) {
+        final title =
+            _decodeHtml(_stripHtml(headingMatch.group(1) ?? '').trim());
+        final body = headingMatch.group(2) ?? '';
+        final descriptionMatch =
+            RegExp(r'<h5[^>]*>([\s\S]*?)</h5>', caseSensitive: false)
+                .firstMatch(body);
+        if (descriptionMatch == null) continue;
+        final description =
+            _decodeHtml(_stripHtml(descriptionMatch.group(1) ?? '').trim());
+        if (title.isEmpty || description.isEmpty || title == description) {
+          continue;
+        }
+        result[_normalizeMatchText(title)] = description;
+      }
+    }
+    return result;
+  }
+
+  Future<List<Map<String, dynamic>>> _combinedAchievementSchema(
+    SteamConfig config,
+    int appId,
+    List<Map<String, dynamic>> baseSchema,
+  ) async {
+    final byApiName = <String, Map<String, dynamic>>{};
+    void addAll(List<Map<String, dynamic>> items) {
+      for (final item in items) {
+        final apiName = '${item['name'] ?? ''}';
+        if (apiName.isEmpty) continue;
+        byApiName.putIfAbsent(apiName, () => item);
+      }
+    }
+
+    addAll(baseSchema);
+    for (final languageCode in ['en', 'pt']) {
+      if (languageCode == config.languageCode) continue;
+      addAll(await _getAchievementSchema(
+          config.copyWith(languageCode: languageCode), appId));
+    }
+    return byApiName.values.toList();
+  }
+
+  String _shortDebugText(String value) {
+    final text = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (text.length <= 180) return text;
+    return '${text.substring(0, 180)}...';
+  }
+
+  int _parsePublicAchievementUnlockTime(String block) {
+    final text =
+        _decodeHtml(_stripHtml(block)).replaceAll(RegExp(r'\s+'), ' ').trim();
+    final steamTextMatch = RegExp(
+      r'\bUnlocked\b(?:\s+on)?\s+(\d{1,2})\s+([A-Za-z]+),?\s*(\d{4})?(?:\s*@\s*(\d{1,2})(?::(\d{2}))?\s*([ap]m)?)?',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (steamTextMatch != null) {
+      final day = int.tryParse(steamTextMatch.group(1) ?? '') ?? 0;
+      final month = _monthNumber(steamTextMatch.group(2) ?? '');
+      final explicitYear = int.tryParse(steamTextMatch.group(3) ?? '') ?? 0;
+      final parsedHour = int.tryParse(steamTextMatch.group(4) ?? '') ?? 0;
+      final parsedMinute = int.tryParse(steamTextMatch.group(5) ?? '') ?? 0;
+      final amPm = (steamTextMatch.group(6) ?? '').toLowerCase();
+      if (day > 0 && month > 0) {
+        final now = DateTime.now();
+        final year = explicitYear > 0
+            ? explicitYear
+            : _inferSteamUnlockYear(now, month, day);
+        final hour = _normalizeAmPmHour(parsedHour, amPm);
+        final hasTime = steamTextMatch.group(4) != null;
+        return _steamCommunityUnlockTime(
+          year: year,
+          month: month,
+          day: day,
+          hour: hour,
+          minute: parsedMinute,
+          hasTime: hasTime,
+        );
+      }
+    }
+    final numericMatch = RegExp(
+      r'\b(?:Unlocked|Desbloquead[oa])\b[^0-9]*(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (numericMatch == null) return 0;
+    final day = int.tryParse(numericMatch.group(1) ?? '') ?? 0;
+    final month = int.tryParse(numericMatch.group(2) ?? '') ?? 0;
+    var year = int.tryParse(numericMatch.group(3) ?? '') ?? 0;
+    if (year > 0 && year < 100) year += 2000;
+    if (day <= 0 || month <= 0 || year <= 0) return 0;
+    return DateTime(year, month, day).millisecondsSinceEpoch ~/ 1000;
+  }
+
+  int _steamCommunityUnlockTime({
+    required int year,
+    required int month,
+    required int day,
+    required int hour,
+    required int minute,
+    required bool hasTime,
+  }) {
+    if (!hasTime) {
+      return DateTime(year, month, day).millisecondsSinceEpoch ~/ 1000;
+    }
+    final pacificOffsetHours = _isPacificDaylightTime(year, month, day) ? 7 : 8;
+    return DateTime.utc(year, month, day, hour + pacificOffsetHours, minute)
+            .millisecondsSinceEpoch ~/
+        1000;
+  }
+
+  bool _isPacificDaylightTime(int year, int month, int day) {
+    final date = DateTime.utc(year, month, day);
+    final starts =
+        DateTime.utc(year, 3, _nthWeekdayOfMonth(year, 3, DateTime.sunday, 2));
+    final ends = DateTime.utc(
+        year, 11, _nthWeekdayOfMonth(year, 11, DateTime.sunday, 1));
+    return !date.isBefore(starts) && date.isBefore(ends);
+  }
+
+  int _nthWeekdayOfMonth(int year, int month, int weekday, int nth) {
+    var date = DateTime.utc(year, month, 1);
+    while (date.weekday != weekday) {
+      date = date.add(const Duration(days: 1));
+    }
+    return date.add(Duration(days: 7 * (nth - 1))).day;
+  }
+
+  int _inferSteamUnlockYear(DateTime now, int month, int day) {
+    var year = now.year;
+    final inferred = DateTime(year, month, day);
+    if (inferred.isAfter(now.add(const Duration(days: 1)))) year--;
+    return year;
+  }
+
+  int _normalizeAmPmHour(int hour, String amPm) {
+    if (hour <= 0) return 0;
+    if (amPm == 'pm' && hour < 12) return hour + 12;
+    if (amPm == 'am' && hour == 12) return 0;
+    return hour.clamp(0, 23);
+  }
+
+  int _monthNumber(String value) {
+    switch (value.toLowerCase()) {
+      case 'jan':
+      case 'january':
+      case 'janeiro':
+        return 1;
+      case 'feb':
+      case 'february':
+      case 'fev':
+      case 'fevereiro':
+        return 2;
+      case 'mar':
+      case 'march':
+      case 'março':
+      case 'marco':
+        return 3;
+      case 'apr':
+      case 'april':
+      case 'abr':
+      case 'abril':
+        return 4;
+      case 'may':
+      case 'maio':
+        return 5;
+      case 'jun':
+      case 'june':
+      case 'junho':
+        return 6;
+      case 'jul':
+      case 'july':
+      case 'julho':
+        return 7;
+      case 'aug':
+      case 'august':
+      case 'ago':
+      case 'agosto':
+        return 8;
+      case 'sep':
+      case 'sept':
+      case 'september':
+      case 'set':
+      case 'setembro':
+        return 9;
+      case 'oct':
+      case 'october':
+      case 'out':
+      case 'outubro':
+        return 10;
+      case 'nov':
+      case 'november':
+      case 'novembro':
+        return 11;
+      case 'dec':
+      case 'december':
+      case 'dez':
+      case 'dezembro':
+        return 12;
+    }
+    return 0;
+  }
+
+  bool _isPublicAchievementUnlocked(String block) {
+    final text =
+        _decodeHtml(_stripHtml(block)).replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (RegExp(r'\b(?:Unlocked|Desbloquead[oa])\b', caseSensitive: false)
+        .hasMatch(text)) {
+      return true;
+    }
+    if (RegExp(
+            r'class="[^"]*(?:\bachieved\b|\bunlocked\b|achieveRowUnlocked|achieveUnlocked)[^"]*"',
+            caseSensitive: false)
+        .hasMatch(block)) {
+      return true;
+    }
+    if (RegExp(r'(?:icon|src)="[^"]*(?:_unlocked|/unlocked/|achieved)[^"]*"',
+            caseSensitive: false)
+        .hasMatch(block)) {
+      return true;
+    }
+    return false;
+  }
+
   Future<List<Map<String, dynamic>>> _getAchievementSchema(
       SteamConfig config, int appId) async {
+    if (config.languageCode == 'en') {
+      return _getAchievementSchemaForLanguage(config, appId, 'english');
+    }
+
+    final english =
+        await _getAchievementSchemaForLanguage(config, appId, 'english');
+    final brazilian =
+        await _getAchievementSchemaForLanguage(config, appId, 'brazilian');
+    final portuguese =
+        await _getAchievementSchemaForLanguage(config, appId, 'portuguese');
+
+    final brazilianScore = _localizedDescriptionScore(brazilian, english);
+    final portugueseScore = _localizedDescriptionScore(portuguese, english);
+    if (portugueseScore > brazilianScore && portuguese.isNotEmpty) {
+      return portuguese;
+    }
+    if (brazilian.isNotEmpty) return brazilian;
+    if (portuguese.isNotEmpty) return portuguese;
+    return english;
+  }
+
+  int _localizedDescriptionScore(List<Map<String, dynamic>> localized,
+      List<Map<String, dynamic>> english) {
+    if (localized.isEmpty || english.isEmpty) return 0;
+    final englishDescriptions = {
+      for (final achievement in english)
+        '${achievement['name'] ?? ''}':
+            _normalizeMatchText('${achievement['description'] ?? ''}')
+    };
+    var score = 0;
+    for (final achievement in localized) {
+      final apiName = '${achievement['name'] ?? ''}';
+      final description =
+          _normalizeMatchText('${achievement['description'] ?? ''}');
+      if (apiName.isEmpty || description.isEmpty) continue;
+      final englishDescription = englishDescriptions[apiName] ?? '';
+      if (englishDescription.isNotEmpty && description != englishDescription) {
+        score++;
+      }
+    }
+    return score;
+  }
+
+  Future<List<Map<String, dynamic>>> _getAchievementSchemaForLanguage(
+      SteamConfig config, int appId, String language) async {
     final uri =
         Uri.parse('$_apiBase/ISteamUserStats/GetSchemaForGame/v2/').replace(
       queryParameters: {
         'key': config.normalizedApiKey,
         'appid': '$appId',
-        'l': config.languageCode == 'en' ? 'english' : 'brazilian',
+        'l': language,
       },
     );
     final data = await _getJson(uri, noAchievementsOn400: true);
@@ -689,11 +1384,16 @@ class SteamApi {
       final descriptions = <String, String>{};
       final obtainability = <String, int>{};
       for (final item in achievements.whereType<Map<String, dynamic>>()) {
-        final apiName = '${item['apiName'] ?? ''}';
+        final apiName =
+            '${item['apiName'] ?? item['api_name'] ?? item['apiname'] ?? item['name'] ?? ''}';
         if (apiName.isEmpty) continue;
         final description = '${item['description'] ?? ''}'.trim();
         if (description.isNotEmpty) descriptions[apiName] = description;
-        obtainability[apiName] = intFromAny(item['obtainability']);
+        obtainability[apiName] = _parseObtainability(item);
+        final inferredGroup = _inferAchievementGroupFromApiName(apiName);
+        if (inferredGroup.isNotEmpty) {
+          descriptions['__group__$apiName'] = inferredGroup;
+        }
       }
       return SteamHuntersAchievementMetadata(
         descriptions: descriptions,
@@ -705,6 +1405,39 @@ class SteamApi {
         obtainability: {},
       );
     }
+  }
+
+  int _parseObtainability(Map<String, dynamic> item) {
+    final direct = intFromAny(item['obtainability']);
+    if (direct != 0) return direct;
+    final fields = [
+      item['obtainabilityStatus'],
+      item['obtainability_status'],
+      item['status'],
+      item['type'],
+      item['note'],
+    ].map((value) => '$value'.toLowerCase()).join(' ');
+    if (fields.contains('bug')) return 1;
+    if (fields.contains('conditional')) return 2;
+    if (fields.contains('unobtain')) return 3;
+    if (fields.contains('impossible')) return 3;
+    return 0;
+  }
+
+  String _inferAchievementGroupFromApiName(String apiName) {
+    final upper = apiName.toUpperCase();
+    final dlcMatch = RegExp(r'^(?:ACH_)?DLC[_-]?(\d+)[_-]').firstMatch(upper);
+    if (dlcMatch != null) return 'DLC ${dlcMatch.group(1)}';
+    final episodeMatch =
+        RegExp(r'^(?:ACH_)?EP(?:ISODE)?[_-]?(\d+)[_-]').firstMatch(upper);
+    if (episodeMatch != null) return 'DLC ${episodeMatch.group(1)}';
+    final expansionMatch =
+        RegExp(r'^(?:ACH_)?EXP(?:ANSION)?[_-]?(\d+)[_-]').firstMatch(upper);
+    if (expansionMatch != null) return 'DLC ${expansionMatch.group(1)}';
+    final addonMatch =
+        RegExp(r'^(?:ACH_)?ADDON[_-]?(\d+)[_-]').firstMatch(upper);
+    if (addonMatch != null) return 'DLC ${addonMatch.group(1)}';
+    return '';
   }
 
   Future<Map<String, String>> _getSteamHuntersGroups(int appId) async {
@@ -720,6 +1453,14 @@ class SteamApi {
     }
   }
 
+  String _cleanSteamHuntersGroupName(String value) {
+    return value
+        .replaceFirst(RegExp(r"\s+\d{1,2}\s+[A-Za-z]{3}\s+'\d{2}$"), '')
+        .replaceFirst(
+            RegExp(r'\s+\d+\s+achievements?$', caseSensitive: false), '')
+        .trim();
+  }
+
   Map<String, String> _parseSteamHuntersGroups(String html) {
     final groups = <String, String>{};
     final groupPattern = RegExp(
@@ -729,15 +1470,31 @@ class SteamApi {
     final apiPattern = RegExp(r'API Name:\s*([^"\n<]+)', caseSensitive: false);
     for (final match in groupPattern.allMatches(html)) {
       final rawGroupName = _decodeHtml(_stripHtml(match.group(2) ?? '').trim());
-      final groupName = rawGroupName
-          .replaceFirst(RegExp(r"\s+\d{1,2}\s+[A-Za-z]{3}\s+'\d{2}$"), '')
-          .trim();
+      final groupName = _cleanSteamHuntersGroupName(rawGroupName);
       final body = match.group(3) ?? '';
       if (groupName.isEmpty || body.isEmpty) continue;
       for (final apiMatch in apiPattern.allMatches(body)) {
         final apiName = _decodeHtml((apiMatch.group(1) ?? '').trim());
         if (apiName.isNotEmpty && !groups.containsKey(apiName)) {
           groups[apiName] = groupName;
+        }
+      }
+    }
+    if (groups.isEmpty) {
+      final looseGroupPattern = RegExp(
+        r'<h3[^>]*>([\s\S]*?)</h3>([\s\S]*?)(?=<h3[^>]*>|</body>)',
+        caseSensitive: false,
+      );
+      for (final match in looseGroupPattern.allMatches(html)) {
+        final groupName = _cleanSteamHuntersGroupName(
+            _decodeHtml(_stripHtml(match.group(1) ?? '').trim()));
+        final body = match.group(2) ?? '';
+        if (groupName.isEmpty || body.isEmpty) continue;
+        for (final apiMatch in apiPattern.allMatches(body)) {
+          final apiName = _decodeHtml((apiMatch.group(1) ?? '').trim());
+          if (apiName.isNotEmpty && !groups.containsKey(apiName)) {
+            groups[apiName] = groupName;
+          }
         }
       }
     }
@@ -926,7 +1683,7 @@ class SteamApi {
         'key': config.normalizedApiKey,
         'steamid': config.normalizedSteamId64,
         'appid': '$appId',
-        'l': config.languageCode == 'en' ? 'english' : 'brazilian',
+        'l': _steamApiLanguage(config),
       },
     );
     final data = await _getJson(uri, noAchievementsOn400: true);
@@ -959,8 +1716,8 @@ class SteamApi {
           const [];
       return {
         for (final item in achievements.whereType<Map<String, dynamic>>())
-          if (item['name'] != null)
-            '${item['name']}': doubleFromAny(item['percent']) ?? 0,
+          if (item['name'] != null && doubleFromAny(item['percent']) != null)
+            '${item['name']}': doubleFromAny(item['percent'])!,
       };
     } on NoAchievementsException {
       return {};

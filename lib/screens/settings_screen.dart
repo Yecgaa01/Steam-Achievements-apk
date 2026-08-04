@@ -1,5 +1,11 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_text.dart';
@@ -7,6 +13,8 @@ import '../models/steam_models.dart';
 import '../services/cache_store.dart';
 import '../services/foreground_sync.dart';
 import '../services/update_service.dart';
+import '../services/steam_session_service.dart';
+import 'steam_login_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final SteamConfig initialConfig;
@@ -30,18 +38,24 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _updateService = UpdateService();
+  final _steamSessionService = SteamSessionService();
+  final _imagePicker = ImagePicker();
   late final TextEditingController _steamIdController;
   late final TextEditingController _apiKeyController;
-  late bool _showHidden;
+  late String _loginMode;
+  bool _hasSteamSession = false;
   late bool _showAverageCompletion;
   late bool _hideSoftware;
   late bool _hideZeroPercentGames;
   late bool _separateDlcAchievements;
   late String _themeMode;
   late bool _showProgressTiers;
-  late bool _showRarityTiers;
   late bool _showObtainabilityBadges;
+  late bool _showRecentAchievementsStrip;
   late bool _goldPerfectGames;
+  late String _profileBackgroundPath;
+  late String _profileBackgroundFit;
+  late String _profileBackgroundAlignment;
   late String _languageCode;
   late bool _showApiKey;
   PackageInfo? _packageInfo;
@@ -56,20 +70,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    _loginMode = widget.initialConfig.loginMode;
+    _loadSteamSessionState();
     _steamIdController =
         TextEditingController(text: widget.initialConfig.steamId64);
     _apiKeyController =
         TextEditingController(text: widget.initialConfig.apiKey);
-    _showHidden = widget.initialConfig.showHidden;
     _showAverageCompletion = widget.initialConfig.showAverageCompletion;
     _hideSoftware = widget.initialConfig.hideSoftware;
     _hideZeroPercentGames = widget.initialConfig.hideZeroPercentGames;
     _separateDlcAchievements = widget.initialConfig.separateDlcAchievements;
     _themeMode = widget.initialConfig.themeMode;
     _showProgressTiers = widget.initialConfig.showProgressTiers;
-    _showRarityTiers = widget.initialConfig.showRarityTiers;
     _showObtainabilityBadges = widget.initialConfig.showObtainabilityBadges;
+    _showRecentAchievementsStrip = widget.initialConfig.showRecentAchievementsStrip;
     _goldPerfectGames = widget.initialConfig.goldPerfectGames;
+    _profileBackgroundPath = widget.initialConfig.profileBackgroundPath;
+    _profileBackgroundFit = widget.initialConfig.profileBackgroundFit;
+    _profileBackgroundAlignment = widget.initialConfig.profileBackgroundAlignment;
     _languageCode = widget.initialConfig.languageCode;
     _showApiKey = false;
     _loadPackageInfo();
@@ -84,9 +102,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   SteamConfig _currentConfig() {
     return SteamConfig(
+      loginMode: _loginMode,
       steamId64: _steamIdController.text,
       apiKey: _apiKeyController.text,
-      showHidden: _showHidden,
       languageCode: _languageCode,
       showAverageCompletion: _showAverageCompletion,
       hideSoftware: _hideSoftware,
@@ -94,9 +112,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       separateDlcAchievements: _separateDlcAchievements,
       themeMode: _themeMode,
       showProgressTiers: _showProgressTiers,
-      showRarityTiers: _showRarityTiers,
       showObtainabilityBadges: _showObtainabilityBadges,
+      showRecentAchievementsStrip: _showRecentAchievementsStrip,
       goldPerfectGames: _goldPerfectGames,
+      profileBackgroundPath: _profileBackgroundPath,
+      profileBackgroundFit: _profileBackgroundFit,
+      profileBackgroundAlignment: _profileBackgroundAlignment,
     );
   }
 
@@ -148,8 +169,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final config = _currentConfig();
     await CacheStore().saveConfig(config);
     widget.onSaved(config);
-    await _startForegroundSyncWithPermission(config);
+    await widget.onSyncRequested?.call(config);
     if (mounted) Navigator.of(context).pop();
+  }
+
+  Future<void> _loadSteamSessionState() async {
+    final initiallySavedSession = await _steamSessionService.hasSavedSession();
+    if (initiallySavedSession) {
+      await _steamSessionService.checkSessionWithDetails();
+    }
+    final hasSession = await _steamSessionService.hasSavedSession();
+    final steamId = await _steamSessionService.loadSteamId();
+    if (!mounted) return;
+    setState(() {
+      _hasSteamSession = hasSession;
+      if (steamId.isNotEmpty && _steamIdController.text.trim().isEmpty) {
+        _steamIdController.text = steamId;
+      }
+    });
+  }
+
+  Future<void> _openSteamLogin() async {
+    final result = await Navigator.of(context).push<SteamLoginResult>(
+      MaterialPageRoute(builder: (_) => const SteamLoginScreen()),
+    );
+    if (!mounted || result == null) return;
+    final savedSteamId = await _steamSessionService.loadSteamId();
+    setState(() {
+      _loginMode = 'steamSession';
+      _hasSteamSession = true;
+      final steamId =
+          result.steamId64.isNotEmpty ? result.steamId64 : savedSteamId;
+      if (steamId.isNotEmpty) _steamIdController.text = steamId;
+    });
+    await _loadSteamSessionState();
+    await _saveImmediately();
+  }
+
+  Future<void> _clearSteamSession() async {
+    await _steamSessionService.clearSession();
+    if (!mounted) return;
+    setState(() {
+      _hasSteamSession = false;
+      if (_loginMode == 'steamSession') _loginMode = 'manual';
+    });
+  }
+
+  Future<String?> _editProfileBackgroundCrop(String imagePath) async {
+    return Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _ProfileBackgroundCropScreen(
+          imagePath: imagePath,
+          isPt: t.isPt,
+        ),
+      ),
+    );
+  }
+  Future<void> _pickProfileBackground() async {
+    final image = await _imagePicker.pickImage(source: ImageSource.gallery);
+    if (image == null) return;
+    final croppedPath = await _editProfileBackgroundCrop(image.path);
+    if (croppedPath == null || croppedPath.isEmpty) return;
+    final previousPath = _profileBackgroundPath.trim();
+    if (previousPath.isNotEmpty && previousPath != croppedPath) {
+      final previousFile = File(previousPath);
+      if (await previousFile.exists()) await previousFile.delete();
+    }
+    if (!mounted) return;
+    setState(() {
+      _profileBackgroundPath = croppedPath;
+      _profileBackgroundFit = 'cover';
+      _profileBackgroundAlignment = 'center';
+    });
+    await _saveImmediately();
+  }
+
+  Future<void> _removeProfileBackground() async {
+    final path = _profileBackgroundPath.trim();
+    if (path.isNotEmpty) {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    }
+    if (mounted) {
+      setState(() => _profileBackgroundPath = '');
+      await _saveImmediately();
+    }
+  }
+
+  Future<void> _saveImmediately() async {
+    final config = _currentConfig();
+    await CacheStore().saveConfig(config);
+    widget.onSaved(config);
   }
 
   Future<void> _save() async {
@@ -223,11 +334,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Scaffold(
         appBar: AppBar(
           title: Text(t.settings),
           bottom: TabBar(tabs: [
+            Tab(text: t.loginTab),
             Tab(text: t.settingsTab),
             Tab(text: t.advancedTab),
             Tab(text: t.themeTab),
@@ -235,6 +347,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ]),
         ),
         body: TabBarView(children: [
+          _loginTab(),
           _settingsTab(),
           _advancedTab(),
           _themeTab(),
@@ -244,61 +357,150 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _loginTab() {
+    return ListView(
+      padding: const EdgeInsets.all(18),
+      children: [
+        Text(t.loginTab,
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 14),
+        Text(t.loginMethod,
+            style: const TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
+          segments: [
+            ButtonSegment(
+                value: 'steamSession', label: Text(t.useSteamSession)),
+            ButtonSegment(value: 'manual', label: Text(t.useManualLogin)),
+          ],
+          selected: {_loginMode},
+          onSelectionChanged: (value) =>
+              setState(() => _loginMode = value.first),
+        ),
+        const SizedBox(height: 18),
+        if (_loginMode == 'steamSession')
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.login),
+                    title: Text(t.steamSessionRecommended),
+                    subtitle: Text(t.steamSessionHelp),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: _openSteamLogin,
+                        icon: const Icon(Icons.open_in_browser),
+                        label: Text(t.steamSessionLogin),
+                      ),
+                      if (_hasSteamSession)
+                        OutlinedButton.icon(
+                          onPressed: _clearSteamSession,
+                          icon: const Icon(Icons.logout),
+                          label: Text(t.clearSteamSession),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        if (_loginMode == 'manual')
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.key),
+                    title: Text(t.manualLogin),
+                    subtitle: Text(t.manualLoginHelp),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _steamIdController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                        labelText: t.steamId64, hintText: '7656119...'),
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () => _openHelpLink('https://steamid.io/'),
+                      icon: const Icon(Icons.link, size: 16),
+                      label: Text(t.steamIdHelpLink),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _apiKeyController,
+                    obscureText: !_showApiKey,
+                    decoration: InputDecoration(
+                      labelText: t.apiKey,
+                      suffixIcon: IconButton(
+                        icon: Icon(_showApiKey
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        onPressed: () =>
+                            setState(() => _showApiKey = !_showApiKey),
+                      ),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () =>
+                          _openHelpLink('https://steamcommunity.com/dev/apikey'),
+                      icon: const Icon(Icons.link, size: 16),
+                      label: Text(t.apiKeyHelpLink),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 12),
+        FilledButton.tonalIcon(
+          onPressed:
+              _saving || widget.onSyncRequested == null ? null : _syncNow,
+          icon: const Icon(Icons.sync),
+          label: Text(t.syncProfileNow),
+        ),
+        const SizedBox(height: 18),
+        FilledButton.icon(
+            onPressed: _saving ? null : _save,
+            icon: _saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.save),
+            label: Text(t.save)),
+      ],
+    );
+  }
+
   Widget _settingsTab() {
     return ListView(
       padding: const EdgeInsets.all(18),
       children: [
-        Text(t.steam,
+        Text(t.settingsTab,
             style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
         const SizedBox(height: 8),
         Text(t.configHelp,
             style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurfaceVariant)),
-        const SizedBox(height: 8),
-        Text(t.saveReminder,
-            style: const TextStyle(color: Colors.amberAccent, fontSize: 12)),
         const SizedBox(height: 18),
-        TextField(
-          controller: _steamIdController,
-          keyboardType: TextInputType.number,
-          decoration:
-              InputDecoration(labelText: t.steamId64, hintText: '7656119...'),
-        ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: () => _openHelpLink('https://steamid.io/'),
-            icon: const Icon(Icons.link, size: 16),
-            label: Text(t.steamIdHelpLink),
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _apiKeyController,
-          obscureText: !_showApiKey,
-          decoration: InputDecoration(
-            labelText: t.apiKey,
-            suffixIcon: IconButton(
-              icon: Icon(_showApiKey ? Icons.visibility_off : Icons.visibility),
-              onPressed: () => setState(() => _showApiKey = !_showApiKey),
-            ),
-          ),
-        ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: () =>
-                _openHelpLink('https://steamcommunity.com/dev/apikey'),
-            icon: const Icon(Icons.link, size: 16),
-            label: Text(t.apiKeyHelpLink),
-          ),
-        ),
-        const SizedBox(height: 12),
-        SwitchListTile(
-            value: _showHidden,
-            onChanged: (value) => setState(() => _showHidden = value),
-            title: Text(t.showHidden),
-            subtitle: Text(t.showHiddenHelp)),
         SwitchListTile(
             value: _showAverageCompletion,
             onChanged: (value) =>
@@ -343,11 +545,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontSize: 12)),
         const SizedBox(height: 20),
-        FilledButton.tonal(
-            onPressed:
-                _saving || widget.onSyncRequested == null ? null : _syncNow,
-            child: Text(t.syncProfileNow)),
-        const SizedBox(height: 10),
         FilledButton(
             onPressed: _saving ? null : _save,
             child: Text(_saving ? t.saving : t.save)),
@@ -460,38 +657,97 @@ class _SettingsScreenState extends State<SettingsScreen> {
           segments: [
             ButtonSegment(value: 'system', label: Text(t.themeSystem)),
             ButtonSegment(value: 'dark', label: Text(t.themeDark)),
+            ButtonSegment(value: 'oled', label: Text(t.themeOled)),
             ButtonSegment(value: 'light', label: Text(t.themeLight)),
           ],
           selected: {_themeMode},
-          onSelectionChanged: (value) =>
-              setState(() => _themeMode = value.first),
+          onSelectionChanged: (value) async {
+            setState(() => _themeMode = value.first);
+            await _saveImmediately();
+          },
         ),
         const SizedBox(height: 18),
         SwitchListTile(
             value: _showProgressTiers,
-            onChanged: (value) => setState(() => _showProgressTiers = value),
+            onChanged: (value) async {
+              setState(() => _showProgressTiers = value);
+              await _saveImmediately();
+            },
             title: Text(t.showProgressTiers),
             subtitle: Text(t.showProgressTiersHelp)),
         SwitchListTile(
-            value: _showRarityTiers,
-            onChanged: (value) => setState(() => _showRarityTiers = value),
-            title: Text(t.showRarityTiers),
-            subtitle: Text(t.showRarityTiersHelp)),
-        SwitchListTile(
             value: _showObtainabilityBadges,
-            onChanged: (value) =>
-                setState(() => _showObtainabilityBadges = value),
+            onChanged: (value) async {
+              setState(() => _showObtainabilityBadges = value);
+              await _saveImmediately();
+            },
             title: Text(t.showObtainabilityBadges),
             subtitle: Text(t.showObtainabilityBadgesHelp)),
         SwitchListTile(
+            value: _showRecentAchievementsStrip,
+            onChanged: (value) async {
+              setState(() => _showRecentAchievementsStrip = value);
+              await _saveImmediately();
+            },
+            title: Text(t.isPt
+                ? 'Mostrar conquistas recentes na home'
+                : 'Show recent achievements on home')),
+        SwitchListTile(
             value: _goldPerfectGames,
-            onChanged: (value) => setState(() => _goldPerfectGames = value),
+            onChanged: (value) async {
+              setState(() => _goldPerfectGames = value);
+              await _saveImmediately();
+            },
             title: Text(t.goldPerfectGames),
             subtitle: Text(t.goldPerfectGamesHelp)),
-        const SizedBox(height: 10),
-        FilledButton(
-            onPressed: _saving ? null : _save,
-            child: Text(_saving ? t.saving : t.save)),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.photo),
+                  title: Text(t.profileBackground),
+                  subtitle: Text(t.profileBackgroundHelp),
+                ),
+                if (_profileBackgroundPath.trim().isNotEmpty) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Image.file(
+                      File(_profileBackgroundPath),
+                      key: ValueKey(_profileBackgroundPath),
+                      height: 96,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _pickProfileBackground,
+                      icon: const Icon(Icons.photo_library),
+                      label: Text(t.chooseProfileBackground),
+                    ),
+                    if (_profileBackgroundPath.trim().isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: _removeProfileBackground,
+                        icon: const Icon(Icons.delete_outline),
+                        label: Text(t.removeProfileBackground),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -682,4 +938,187 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ],
     );
   }
+}
+
+class _ProfileBackgroundCropScreen extends StatefulWidget {
+  final String imagePath;
+  final bool isPt;
+
+  const _ProfileBackgroundCropScreen({
+    required this.imagePath,
+    required this.isPt,
+  });
+
+  @override
+  State<_ProfileBackgroundCropScreen> createState() =>
+      _ProfileBackgroundCropScreenState();
+}
+
+class _ProfileBackgroundCropScreenState
+    extends State<_ProfileBackgroundCropScreen> {
+  final _boundaryKey = GlobalKey();
+  final _transformationController = TransformationController();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _transformationController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveCrop() async {
+    setState(() => _saving = true);
+    try {
+      final boundary = _boundaryKey.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      if (boundary == null) return;
+      final fullImage = await boundary.toImage(pixelRatio: 2);
+      final imageWidth = fullImage.width.toDouble();
+      final cropHeight = imageWidth * 136 / 390;
+      final cropTop = (fullImage.height - cropHeight) / 2;
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      final src = Rect.fromLTWH(0, cropTop, imageWidth, cropHeight);
+      const dst = Rect.fromLTWH(0, 0, 1170, 408);
+      canvas.drawImageRect(fullImage, src, dst, Paint());
+      final croppedImage = await recorder.endRecording().toImage(1170, 408);
+      final byteData =
+          await croppedImage.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) return;
+      final bytes = byteData.buffer.asUint8List();
+      final appDir = await getApplicationDocumentsDirectory();
+      final file = File(
+        '${appDir.path}/profile_background_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
+      await file.writeAsBytes(bytes, flush: true);
+      if (!mounted) return;
+      Navigator.of(context).pop(file.path);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.isPt ? 'Ajustar foto do banner' : 'Adjust banner photo';
+    final help = widget.isPt
+        ? 'Arraste a imagem e use pinça para ajustar o zoom.'
+        : 'Drag the image and pinch to adjust zoom.';
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Text(title),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : _saveCrop,
+            child: Text(widget.isPt ? 'OK' : 'Done'),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Text(help,
+                  style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            ),
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  RepaintBoundary(
+                    key: _boundaryKey,
+                    child: InteractiveViewer(
+                      transformationController: _transformationController,
+                      minScale: 0.55,
+                      maxScale: 5,
+                      boundaryMargin: const EdgeInsets.all(420),
+                      child: Image.file(
+                        File(widget.imagePath),
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
+                  IgnorePointer(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final width = constraints.maxWidth;
+                        final cropHeight = width * 136 / 390;
+                        final top = (constraints.maxHeight - cropHeight) / 2;
+                        return CustomPaint(
+                          painter: _CropOverlayPainter(
+                            top: top,
+                            height: cropHeight,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _saving ? null : _saveCrop,
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.check),
+                  label: Text(widget.isPt ? 'Salvar recorte' : 'Save crop'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CropOverlayPainter extends CustomPainter {
+  final double top;
+  final double height;
+
+  const _CropOverlayPainter({required this.top, required this.height});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final crop = Rect.fromLTWH(0, top, size.width, height);
+    final overlay = Paint()..color = Colors.black.withValues(alpha: 0.38);
+    final fullPath = Path()..addRect(Offset.zero & size);
+    final cropPath = Path()..addRect(crop);
+    canvas.drawPath(
+      Path.combine(PathOperation.difference, fullPath, cropPath),
+      overlay,
+    );
+
+    final border = Paint()
+      ..color = Colors.white.withValues(alpha: 0.88)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    canvas.drawRect(crop, border);
+
+    final grid = Paint()
+      ..color = Colors.white.withValues(alpha: 0.38)
+      ..strokeWidth = 0.8;
+    for (final x in [crop.left + crop.width / 3, crop.left + crop.width * 2 / 3]) {
+      canvas.drawLine(Offset(x, crop.top), Offset(x, crop.bottom), grid);
+    }
+    for (final y in [crop.top + crop.height / 3, crop.top + crop.height * 2 / 3]) {
+      canvas.drawLine(Offset(crop.left, y), Offset(crop.right, y), grid);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CropOverlayPainter oldDelegate) =>
+      oldDelegate.top != top || oldDelegate.height != height;
 }

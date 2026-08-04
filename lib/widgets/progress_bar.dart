@@ -15,7 +15,7 @@ class TrophyProgressBar extends StatelessWidget {
         minHeight: height,
         value: value.clamp(0, 1),
         backgroundColor: const Color(0xFF1F2937),
-        valueColor: AlwaysStoppedAnimation(valueColor ?? const Color(0xFF38BDF8)),
+        valueColor: AlwaysStoppedAnimation(valueColor ?? const Color(0xFF2563EB)),
       ),
     );
   }

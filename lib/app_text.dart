@@ -11,8 +11,8 @@ class AppText {
   String get settings => isPt ? 'Configuração' : 'Settings';
   String get steam => 'Steam';
   String get configHelp => isPt
-      ? 'Informe seu SteamID64 e sua Steam Web API key. Os dados ficam salvos só no aparelho.'
-      : 'Enter your SteamID64 and Steam Web API key. Data is stored only on this device.';
+      ? 'Entre com Steam para mais precisão ou use SteamID64 + Steam Web API key. Os dados ficam salvos só no aparelho.'
+      : 'Sign in with Steam for better accuracy, or use SteamID64 + Steam Web API key. Data is stored only on this device.';
   String get steamId64 => 'SteamID64';
   String get apiKey => 'Steam Web API key';
   String get showHidden =>
@@ -46,8 +46,8 @@ class AppText {
   String get configureFirst =>
       isPt ? 'Configure sua Steam primeiro' : 'Set up Steam first';
   String get configureHelp => isPt
-      ? 'Adicione SteamID64 e API key para carregar seus jogos e conquistas.'
-      : 'Add your SteamID64 and API key to load your games and achievements.';
+      ? 'Entre com Steam para mais precisão ou use SteamID64 + API key se preferir não fazer login.'
+      : 'Sign in with Steam for better accuracy, or use SteamID64 + API key if you prefer not to log in.';
   String get configure => isPt ? 'Configurar' : 'Configure';
   String get loadGamesFailed =>
       isPt ? 'Falha ao carregar jogos' : 'Failed to load games';
@@ -67,6 +67,7 @@ class AppText {
   String get achievements => isPt ? 'Conquistas' : 'Achievements';
   String achievementsProgress(int unlocked, int total) =>
       isPt ? '$unlocked/$total conquistas' : '$unlocked/$total achievements';
+  String get unlockedStatus => isPt ? 'Desbloqueada' : 'Unlocked';
   String get released => isPt ? 'Liberada' : 'Unlocked';
   String get notReleased => isPt ? 'Faltando' : 'Missing';
   String get rarity => isPt ? 'Raridade' : 'Rarity';
@@ -76,12 +77,17 @@ class AppText {
   String get hiddenDescriptionUnavailable => isPt
       ? 'A Steam API não disponibilizou a descrição desta conquista oculta.'
       : 'Steam API did not provide the description for this hidden achievement.';
-  String get offlineAchievementsCache =>
-      isPt ? 'Mostrando dados salvos offline.' : 'Showing saved offline data.';
+  String get offlineAchievementsCache => isPt
+      ? 'Mostrando dados salvos offline.'
+      : 'Showing saved offline data.';
+  String get offlineAchievementsNoCache => isPt
+      ? 'Sem conexão e sem cache deste jogo. Abra esta tela uma vez com internet para salvar as conquistas e poder vê-las offline.'
+      : 'Offline and no cache for this game. Open this screen once while online to save achievements for offline viewing.';
   String get firstAchievement =>
       isPt ? 'Primeira conquista' : 'First achievement';
   String get lastAchievement => isPt ? 'Última conquista' : 'Last achievement';
   String get lastPlayed => isPt ? 'Última vez jogado' : 'Last played';
+  String get timePlayed => isPt ? 'Tempo jogado' : 'Time played';
   String get unavailableShort => '—';
   String get hideSoftware => isPt ? 'Ocultar não-jogos' : 'Hide non-games';
   String get hideSoftwareHelp => isPt
@@ -181,10 +187,47 @@ class AppText {
       : 'Show all manually hidden games?';
   String get restore => isPt ? 'Reexibir' : 'Show';
   String get cancel => isPt ? 'Cancelar' : 'Cancel';
+  String get loginMethod => isPt ? 'Método de login' : 'Login method';
+  String get steamSessionLogin =>
+      isPt ? 'Entrar com Steam' : 'Sign in with Steam';
+  String get steamSessionRecommended =>
+      isPt ? 'Entrar com Steam (experimental)' : 'Sign in with Steam (experimental)';
+  String get steamSessionHelp => isPt
+      ? 'Recomendado apenas para jogos privados. Pode expirar após 24h, mas tentará renovar automaticamente.'
+      : 'Recommended only for private games. It may expire after 24h, but will try to renew automatically.';
+  String get steamSessionSaved =>
+      isPt ? 'Sessão Steam salva' : 'Steam session saved';
+  String get steamSessionMissing =>
+      isPt ? 'Nenhuma sessão Steam' : 'No Steam session';
+  String get steamSessionExpired => isPt
+      ? 'Sessão expirada. Toque para renovar.'
+      : 'Session expired. Tap to renew.';
+  String get clearSteamSession =>
+      isPt ? 'Sair / limpar sessão' : 'Sign out / clear session';
+  String get manualLogin => isPt
+      ? 'SteamID64 + API key (opcional)'
+      : 'SteamID64 + API key (optional)';
+  String get manualLoginHelp => isPt
+      ? 'Prefere não entrar com Steam? Continue usando SteamID64 + Steam Web API key. Funciona, mas algumas informações podem ser menos precisas e dependem da privacidade do perfil.'
+      : 'Prefer not to sign in with Steam? Keep using SteamID64 + Steam Web API key. It works, but some information may be less accurate and depends on profile privacy.';
+  String get useManualLogin =>
+      isPt ? 'Usar SteamID64 + API' : 'Use SteamID64 + API';
+  String get useSteamSession => isPt ? 'Usar Steam login' : 'Use Steam login';
+  String get profileBackground =>
+      isPt ? 'Fundo do perfil' : 'Profile background';
+  String get profileBackgroundHelp => isPt
+      ? 'Escolha uma foto do celular para aparecer somente no card do perfil da página inicial.'
+      : 'Choose a photo from this device to show only on the home profile card.';
+  String get chooseProfileBackground => isPt ? 'Escolher foto' : 'Choose photo';
+  String get removeProfileBackground => isPt ? 'Remover foto' : 'Remove photo';
+  String get profileBackgroundSelected =>
+      isPt ? 'Foto de fundo selecionada.' : 'Background photo selected.';
+
   String get themeTab => isPt ? 'Tema' : 'Theme';
   String get themeMode => isPt ? 'Modo do tema' : 'Theme mode';
   String get themeSystem => isPt ? 'Sistema' : 'System';
   String get themeDark => isPt ? 'Escuro' : 'Dark';
+  String get themeOled => isPt ? 'Black OLED' : 'Black OLED';
   String get themeLight => isPt ? 'Claro' : 'Light';
   String get showProgressTiers =>
       isPt ? 'Mostrar tiers de progresso' : 'Show progress tiers';
@@ -236,6 +279,7 @@ class AppText {
   String get rarityVeryRare => isPt ? 'Muito rara' : 'Very rare';
   String get rarityLegendary => isPt ? 'Lendária' : 'Legendary';
   String get rarityMythic => isPt ? 'Mítica' : 'Mythic';
+  String get loginTab => isPt ? 'Login' : 'Login';
   String get settingsTab => isPt ? 'Configurações' : 'Settings';
   String get advancedTab => isPt ? 'Avançado' : 'Advanced';
   String get aboutTab => isPt ? 'Sobre' : 'About';
@@ -244,6 +288,15 @@ class AppText {
       : 'Powered by Steam Web API with additional data from Steam Hunters and Exophase.';
   String get supportOnKofi => isPt ? 'Apoiar no Ko-fi' : 'Support on Ko-fi';
   String get author => isPt ? 'Autor: Moligon' : 'Author: Moligon';
+  String get oldAppDetectedTitle =>
+      isPt ? 'Versão antiga detectada' : 'Old version detected';
+  String get oldAppDetectedBody => isPt
+      ? 'Encontramos uma instalação antiga do Steam Achievements com outro pacote Android. Ela pode aparecer como outro app separado e causar confusão. Recomendamos desinstalar a versão antiga.'
+      : 'An older Steam Achievements install with a different Android package was found. It may appear as a separate app and cause confusion. We recommend uninstalling the old version.';
+  String get uninstallOldApp =>
+      isPt ? 'Desinstalar versão antiga' : 'Uninstall old version';
+  String get notNow => isPt ? 'Agora não' : 'Not now';
+
   String get updateNotificationTitle =>
       isPt ? 'Atualização disponível' : 'Update available';
   String updateNotificationBody(String version) => isPt

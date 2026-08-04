@@ -1,4 +1,5 @@
 class SteamConfig {
+  final String loginMode;
   final String steamId64;
   final String apiKey;
   final bool showHidden;
@@ -12,9 +13,14 @@ class SteamConfig {
   final bool showProgressTiers;
   final bool showRarityTiers;
   final bool showObtainabilityBadges;
+  final bool showRecentAchievementsStrip;
   final bool goldPerfectGames;
+  final String profileBackgroundPath;
+  final String profileBackgroundFit;
+  final String profileBackgroundAlignment;
 
   const SteamConfig({
+    this.loginMode = 'manual',
     required this.steamId64,
     required this.apiKey,
     this.showHidden = false,
@@ -28,15 +34,24 @@ class SteamConfig {
     this.showProgressTiers = true,
     this.showRarityTiers = true,
     this.showObtainabilityBadges = true,
+    this.showRecentAchievementsStrip = true,
     this.goldPerfectGames = true,
+    this.profileBackgroundPath = '',
+    this.profileBackgroundFit = 'cover',
+    this.profileBackgroundAlignment = 'center',
   });
 
-  bool get isComplete =>
-      steamId64.trim().isNotEmpty && apiKey.trim().isNotEmpty;
+  bool get isComplete {
+    final hasSteamId = steamId64.trim().isNotEmpty;
+    if (loginMode == 'steamSession') return hasSteamId;
+    return hasSteamId && apiKey.trim().isNotEmpty;
+  }
+
   String get normalizedSteamId64 => steamId64.trim();
   String get normalizedApiKey => apiKey.trim();
 
   SteamConfig copyWith({
+    String? loginMode,
     String? steamId64,
     String? apiKey,
     bool? showHidden,
@@ -50,9 +65,14 @@ class SteamConfig {
     bool? showProgressTiers,
     bool? showRarityTiers,
     bool? showObtainabilityBadges,
+    bool? showRecentAchievementsStrip,
     bool? goldPerfectGames,
+    String? profileBackgroundPath,
+    String? profileBackgroundFit,
+    String? profileBackgroundAlignment,
   }) {
     return SteamConfig(
+      loginMode: loginMode ?? this.loginMode,
       steamId64: steamId64 ?? this.steamId64,
       apiKey: apiKey ?? this.apiKey,
       showHidden: showHidden ?? this.showHidden,
@@ -70,7 +90,14 @@ class SteamConfig {
       showRarityTiers: showRarityTiers ?? this.showRarityTiers,
       showObtainabilityBadges:
           showObtainabilityBadges ?? this.showObtainabilityBadges,
+      showRecentAchievementsStrip:
+          showRecentAchievementsStrip ?? this.showRecentAchievementsStrip,
       goldPerfectGames: goldPerfectGames ?? this.goldPerfectGames,
+      profileBackgroundPath:
+          profileBackgroundPath ?? this.profileBackgroundPath,
+      profileBackgroundFit: profileBackgroundFit ?? this.profileBackgroundFit,
+      profileBackgroundAlignment:
+          profileBackgroundAlignment ?? this.profileBackgroundAlignment,
     );
   }
 }
@@ -142,6 +169,7 @@ class SteamGame {
   final bool typeLoaded;
   final bool manuallyAdded;
   final String sourceUrl;
+  final String storeHeaderUrl;
 
   const SteamGame({
     required this.appId,
@@ -158,14 +186,22 @@ class SteamGame {
     this.typeLoaded = false,
     this.manuallyAdded = false,
     this.sourceUrl = '',
+    this.storeHeaderUrl = '',
   });
 
   double get progress => total == 0 ? 0 : unlocked / total;
-  String get headerUrl =>
-      'https://cdn.akamai.steamstatic.com/steam/apps/$appId/header.jpg';
+  String get headerUrl => storeHeaderUrl.trim().isNotEmpty
+      ? storeHeaderUrl.trim()
+      : 'https://cdn.akamai.steamstatic.com/steam/apps/$appId/header.jpg';
+  String get sharedHeaderUrl =>
+      'https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/$appId/header.jpg';
+  String get capsuleUrl =>
+      'https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/$appId/capsule_616x353.jpg';
 
   SteamGame copyWith(
-      {int? unlocked,
+      {int? playtimeForever,
+      int? playtime2Weeks,
+      int? unlocked,
       int? total,
       bool? progressLoaded,
       bool? hasAchievements,
@@ -174,12 +210,13 @@ class SteamGame {
       int? lastPlayedUnix,
       int? latestAchievementUnix,
       bool? manuallyAdded,
-      String? sourceUrl}) {
+      String? sourceUrl,
+      String? storeHeaderUrl}) {
     return SteamGame(
       appId: appId,
       name: name,
-      playtimeForever: playtimeForever,
-      playtime2Weeks: playtime2Weeks,
+      playtimeForever: playtimeForever ?? this.playtimeForever,
+      playtime2Weeks: playtime2Weeks ?? this.playtime2Weeks,
       lastPlayedUnix: lastPlayedUnix ?? this.lastPlayedUnix,
       latestAchievementUnix:
           latestAchievementUnix ?? this.latestAchievementUnix,
@@ -191,6 +228,7 @@ class SteamGame {
       typeLoaded: typeLoaded ?? this.typeLoaded,
       manuallyAdded: manuallyAdded ?? this.manuallyAdded,
       sourceUrl: sourceUrl ?? this.sourceUrl,
+      storeHeaderUrl: storeHeaderUrl ?? this.storeHeaderUrl,
     );
   }
 
@@ -210,6 +248,7 @@ class SteamGame {
       'type_loaded': typeLoaded,
       'manually_added': manuallyAdded,
       'source_url': sourceUrl,
+      'store_header_url': storeHeaderUrl,
     };
   }
 
@@ -226,6 +265,7 @@ class SteamGame {
       typeLoaded: boolFromAny(json['type_loaded']),
       manuallyAdded: boolFromAny(json['manually_added']),
       sourceUrl: '${json['source_url'] ?? ''}',
+      storeHeaderUrl: '${json['store_header_url'] ?? ''}',
       lastPlayedUnix: intFromAny(json['rtime_last_played']),
       latestAchievementUnix: intFromAny(json['latest_achievement_unix']),
     );
@@ -239,6 +279,8 @@ class SteamGame {
       playtimeForever: intFromAny(json['playtime_forever']),
       playtime2Weeks: intFromAny(json['playtime_2weeks']),
       lastPlayedUnix: intFromAny(json['rtime_last_played']),
+      storeHeaderUrl:
+          '${json['header_image'] ?? json['capsule_image'] ?? ''}',
     );
   }
 }
@@ -247,9 +289,13 @@ class SteamAppDetails {
   final int appId;
   final String type;
   final bool utility;
+  final String headerImageUrl;
 
   const SteamAppDetails(
-      {required this.appId, required this.type, this.utility = false});
+      {required this.appId,
+      required this.type,
+      this.utility = false,
+      this.headerImageUrl = ''});
 }
 
 class SteamAchievement {

@@ -41,7 +41,7 @@ class _AchievementTileState extends State<AchievementTile> {
   }
 
   String? _rarityTier(double? percent) {
-    if (!widget.showRarityTier || percent == null) return null;
+    if (percent == null) return null;
     if (percent < 1) return widget.text.rarityMythic;
     if (percent < 5) return widget.text.rarityLegendary;
     if (percent < 10) return widget.text.rarityVeryRare;
@@ -51,13 +51,13 @@ class _AchievementTileState extends State<AchievementTile> {
   }
 
   Color? _rarityTierColor(double? percent) {
-    if (!widget.showRarityTier || percent == null) return null;
-    if (percent < 1) return const Color(0xFFFB7185);
-    if (percent < 5) return const Color(0xFFFACC15);
-    if (percent < 10) return const Color(0xFFC084FC);
-    if (percent < 20) return const Color(0xFF60A5FA);
-    if (percent < 50) return const Color(0xFF86EFAC);
-    return const Color(0xFF93C5FD);
+    if (percent == null) return null;
+    if (percent < 1) return const Color(0xFFFFD700);
+    if (percent < 5) return const Color(0xFFFF8000);
+    if (percent < 10) return const Color(0xFFA335EE);
+    if (percent < 20) return const Color(0xFF0070DD);
+    if (percent < 50) return const Color(0xFF1EFF00);
+    return const Color(0xFF9D9D9D);
   }
 
   String? _obtainabilityLabel() {
@@ -87,28 +87,17 @@ class _AchievementTileState extends State<AchievementTile> {
     return null;
   }
 
-  String _formatUnixDate(int unixSeconds) {
+  String _formatUnlockDateTime(BuildContext context, int unixSeconds) {
     final date =
         DateTime.fromMillisecondsSinceEpoch(unixSeconds * 1000, isUtc: true)
             .toLocal();
-    final day = date.day.toString().padLeft(2, '0');
-    final month = date.month.toString().padLeft(2, '0');
-    if (widget.text.isPt) return '$day/$month/${date.year}';
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec'
-    ];
-    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+    final localizations = MaterialLocalizations.of(context);
+    final dateText = localizations.formatShortDate(date);
+    final timeText = localizations.formatTimeOfDay(
+      TimeOfDay.fromDateTime(date),
+      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+    );
+    return '$dateText $timeText';
   }
 
   @override
@@ -123,16 +112,23 @@ class _AchievementTileState extends State<AchievementTile> {
     final rarityTier = _rarityTier(achievement.globalPercent);
     final rarityTierColor = _rarityTierColor(achievement.globalPercent);
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final scaffoldColor = Theme.of(context).scaffoldBackgroundColor;
+    final isOled = dark &&
+        scaffoldColor.r < 0.02 &&
+        scaffoldColor.g < 0.02 &&
+        scaffoldColor.b < 0.02;
     final tileColor = achievement.achieved
-        ? (dark ? const Color(0xFF102A43) : const Color(0xFFE0F2FE))
-        : (dark ? const Color(0xFF111827) : Colors.white);
-    final borderColor = achievement.achieved
-        ? const Color(0xFF38BDF8)
-        : (dark ? const Color(0xFF1F2937) : const Color(0xFFE2E8F0));
+        ? (dark
+            ? (isOled ? const Color(0xFF050505) : const Color(0xFF070D24))
+            : Colors.white)
+        : (dark
+            ? (isOled ? const Color(0xFF191919) : const Color(0xFF25293D))
+            : const Color(0xFFF1F5F9));
+    final borderColor = dark
+        ? Colors.white.withValues(alpha: achievement.achieved ? 0.06 : 0.08)
+        : const Color(0xFFE2E8F0);
     final subtleText = dark ? Colors.white60 : const Color(0xFF64748B);
-    final statusText = achievement.achieved
-        ? const Color(0xFF0284C7)
-        : (dark ? Colors.white54 : const Color(0xFF64748B));
+    final statusText = dark ? Colors.white60 : const Color(0xFF64748B);
     final placeholderColor =
         dark ? const Color(0xFF1F2937) : const Color(0xFFE2E8F0);
     final placeholderIconColor =
@@ -156,7 +152,7 @@ class _AchievementTileState extends State<AchievementTile> {
         ? ''
         : '${achievement.progressCurrent}/${achievement.progressTotal}';
     final unlockDate = achievement.achieved && achievement.unlockTime > 0
-        ? _formatUnixDate(achievement.unlockTime)
+        ? _formatUnlockDateTime(context, achievement.unlockTime)
         : '';
 
     return InkWell(
@@ -164,37 +160,40 @@ class _AchievementTileState extends State<AchievementTile> {
           ? () => setState(() => _revealed = !_revealed)
           : null,
       onLongPress: widget.onTogglePinned,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-        padding: const EdgeInsets.all(10),
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        padding: const EdgeInsets.fromLTRB(7, 6, 7, 6),
         decoration: BoxDecoration(
           color: tileColor,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: borderColor),
         ),
         child: Row(
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
-              child: CachedNetworkImage(
-                imageUrl: iconUrl,
-                width: 52,
-                height: 52,
-                fit: BoxFit.cover,
-                errorWidget: (_, __, ___) => Container(
-                  width: 52,
-                  height: 52,
-                  color: placeholderColor,
-                  child: Icon(
-                      achievement.hidden
-                          ? Icons.visibility_off
-                          : Icons.emoji_events,
-                      color: placeholderIconColor),
+              child: Opacity(
+                opacity: achievement.achieved ? 1 : 0.52,
+                child: CachedNetworkImage(
+                  imageUrl: iconUrl,
+                  width: 42,
+                  height: 42,
+                  fit: BoxFit.cover,
+                  errorWidget: (_, __, ___) => Container(
+                    width: 42,
+                    height: 42,
+                    color: placeholderColor,
+                    child: Icon(
+                        achievement.hidden
+                            ? Icons.visibility_off
+                            : Icons.emoji_events,
+                        color: placeholderIconColor),
+                  ),
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -202,11 +201,14 @@ class _AchievementTileState extends State<AchievementTile> {
                   Row(
                     children: [
                       Expanded(
-                          child: Text(title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w700))),
+                          child: Opacity(
+                        opacity: achievement.achieved ? 1 : 0.62,
+                        child: Text(title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 14.5, fontWeight: FontWeight.w800)),
+                      )),
                       if (achievement.hidden)
                         const Icon(Icons.visibility_off,
                             size: 16, color: Colors.amber),
@@ -233,18 +235,21 @@ class _AchievementTileState extends State<AchievementTile> {
                         ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(description,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: subtleText, fontSize: 12)),
+                  const SizedBox(height: 2),
+                  Opacity(
+                    opacity: achievement.achieved ? 1 : 0.58,
+                    child: Text(description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: subtleText, fontSize: 11.5)),
+                  ),
                   if (achievementProgressText.isNotEmpty) ...[
-                    const SizedBox(height: 7),
+                    const SizedBox(height: 4),
                     ClipRRect(
                       borderRadius: BorderRadius.circular(999),
                       child: LinearProgressIndicator(
                         value: achievementProgress,
-                        minHeight: 6,
+                        minHeight: 5,
                         backgroundColor: dark
                             ? const Color(0xFF374151)
                             : const Color(0xFFE2E8F0),
@@ -260,75 +265,88 @@ class _AchievementTileState extends State<AchievementTile> {
                       achievementProgressText,
                       style: TextStyle(
                         color: subtleText,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                  if (unlockDate.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      unlockDate,
-                      style: TextStyle(
-                        color: subtleText,
-                        fontSize: 11,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                   ],
                   const SizedBox(height: 4),
-                  Wrap(
-                    spacing: 7,
-                    runSpacing: 5,
-                    crossAxisAlignment: WrapCrossAlignment.center,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(
-                          achievement.achieved
-                              ? text.released
-                              : text.notReleased,
-                          style: TextStyle(color: statusText, fontSize: 12)),
-                      if (rarityTier != null && rarityTierColor != null)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: rarityTierColor.withValues(
-                                alpha: dark ? 0.14 : 0.10),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(
-                                color: rarityTierColor.withValues(alpha: 0.75)),
-                          ),
-                          child: Text(rarityTier,
-                              style: TextStyle(
-                                  color: rarityTierColor,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w900)),
+                      Expanded(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              child: achievement.achieved
+                                  ? Text.rich(
+                                      TextSpan(
+                                        children: [
+                                          TextSpan(
+                                            text: '${text.unlockedStatus} ',
+                                            style: TextStyle(
+                                              color: statusText,
+                                              fontStyle: FontStyle.normal,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                          TextSpan(text: unlockDate),
+                                        ],
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: subtleText,
+                                        fontSize: 11,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
+                            if (obtainabilityLabel != null &&
+                                obtainabilityColor != null) ...[
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(obtainabilityLabel,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        color: obtainabilityColor,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w900)),
+                              ),
+                            ],
+                          ],
                         ),
-                      if (obtainabilityLabel != null &&
-                          obtainabilityColor != null)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: obtainabilityColor.withValues(
-                                alpha: dark ? 0.16 : 0.10),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(
-                                color:
-                                    obtainabilityColor.withValues(alpha: 0.8)),
-                          ),
-                          child: Text(obtainabilityLabel,
-                              style: TextStyle(
-                                  color: obtainabilityColor,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w900)),
+                      ),
+                      SizedBox(
+                        width: 46,
+                        child: Align(
+                          alignment: Alignment.bottomRight,
+                          child: rarityTier != null && rarityTierColor != null
+                              ? Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.star,
+                                        size: 13, color: rarityTierColor),
+                                    if (percent.isNotEmpty)
+                                      Text(percent,
+                                          style: TextStyle(
+                                              color: subtleText,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w800)),
+                                  ],
+                                )
+                              : percent.isNotEmpty
+                                  ? Text(percent,
+                                      style: TextStyle(
+                                          color: subtleText,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w800))
+                                  : const SizedBox.shrink(),
                         ),
-                      if (percent.isNotEmpty)
-                        Text(percent,
-                            style: TextStyle(
-                                color: subtleText,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700)),
+                      ),
                     ],
                   ),
                 ],
