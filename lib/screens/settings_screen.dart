@@ -83,11 +83,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _themeMode = widget.initialConfig.themeMode;
     _showProgressTiers = widget.initialConfig.showProgressTiers;
     _showObtainabilityBadges = widget.initialConfig.showObtainabilityBadges;
-    _showRecentAchievementsStrip = widget.initialConfig.showRecentAchievementsStrip;
+    _showRecentAchievementsStrip =
+        widget.initialConfig.showRecentAchievementsStrip;
     _goldPerfectGames = widget.initialConfig.goldPerfectGames;
     _profileBackgroundPath = widget.initialConfig.profileBackgroundPath;
     _profileBackgroundFit = widget.initialConfig.profileBackgroundFit;
-    _profileBackgroundAlignment = widget.initialConfig.profileBackgroundAlignment;
+    _profileBackgroundAlignment =
+        widget.initialConfig.profileBackgroundAlignment;
     _languageCode = widget.initialConfig.languageCode;
     _showApiKey = false;
     _loadPackageInfo();
@@ -226,6 +228,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
+
   Future<void> _pickProfileBackground() async {
     final image = await _imagePicker.pickImage(source: ImageSource.gallery);
     if (image == null) return;
@@ -459,8 +462,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
-                      onPressed: () =>
-                          _openHelpLink('https://steamcommunity.com/dev/apikey'),
+                      onPressed: () => _openHelpLink(
+                          'https://steamcommunity.com/dev/apikey'),
                       icon: const Icon(Icons.link, size: 16),
                       label: Text(t.apiKeyHelpLink),
                     ),
@@ -778,7 +781,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 );
               }
-              final notes = snapshot.data?.trim() ?? '';
+              final notes = _localizedReleaseNotes(snapshot.data?.trim() ?? '');
               if (snapshot.hasError || notes.isEmpty) {
                 return Text(t.changelogUnavailable);
               }
@@ -796,6 +799,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  String _localizedReleaseNotes(String notes) {
+    final preferred = _languageCode == 'en' ? 'en' : 'pt';
+    final sections = <String, List<String>>{};
+    String? currentLanguage;
+
+    for (final rawLine in notes.replaceAll('\r\n', '\n').split('\n')) {
+      final marker = RegExp(
+        r'^\s*#{1,6}\s*(pt-br|pt|portugu[eê]s|br|en|english|ingl[eê]s)\s*$',
+        caseSensitive: false,
+      ).firstMatch(rawLine);
+      if (marker != null) {
+        final value = marker.group(1)!.toLowerCase();
+        currentLanguage =
+            value.startsWith('en') || value.startsWith('ingl') ? 'en' : 'pt';
+        sections.putIfAbsent(currentLanguage, () => []);
+        continue;
+      }
+      if (currentLanguage != null) {
+        sections[currentLanguage]!.add(rawLine);
+      }
+    }
+
+    if (sections.isEmpty) return notes.trim();
+    return (sections[preferred] ??
+            sections[preferred == 'en' ? 'pt' : 'en'] ??
+            [])
+        .join('\n')
+        .trim();
   }
 
   Widget _releaseNotesCard(String notes) {
@@ -864,6 +897,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _aboutTab() {
     final info = _packageInfo;
+    final updateNotes = _updateInfo == null
+        ? ''
+        : _localizedReleaseNotes(_updateInfo!.notes.trim());
     return ListView(
       padding: const EdgeInsets.all(18),
       children: [
@@ -917,9 +953,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 16),
           Text(t.updateAvailable(_updateInfo!.version),
               style: const TextStyle(fontWeight: FontWeight.w800)),
-          if (_updateInfo!.notes.trim().isNotEmpty) ...[
+          if (updateNotes.isNotEmpty) ...[
             const SizedBox(height: 8),
-            _releaseNotesCard(_updateInfo!.notes.trim()),
+            _releaseNotesCard(updateNotes),
           ],
           const SizedBox(height: 12),
           FilledButton.icon(
@@ -1000,7 +1036,8 @@ class _ProfileBackgroundCropScreenState
 
   @override
   Widget build(BuildContext context) {
-    final title = widget.isPt ? 'Ajustar foto do banner' : 'Adjust banner photo';
+    final title =
+        widget.isPt ? 'Ajustar foto do banner' : 'Adjust banner photo';
     final help = widget.isPt
         ? 'Arraste a imagem e use pinça para ajustar o zoom.'
         : 'Drag the image and pinch to adjust zoom.';
@@ -1110,10 +1147,16 @@ class _CropOverlayPainter extends CustomPainter {
     final grid = Paint()
       ..color = Colors.white.withValues(alpha: 0.38)
       ..strokeWidth = 0.8;
-    for (final x in [crop.left + crop.width / 3, crop.left + crop.width * 2 / 3]) {
+    for (final x in [
+      crop.left + crop.width / 3,
+      crop.left + crop.width * 2 / 3
+    ]) {
       canvas.drawLine(Offset(x, crop.top), Offset(x, crop.bottom), grid);
     }
-    for (final y in [crop.top + crop.height / 3, crop.top + crop.height * 2 / 3]) {
+    for (final y in [
+      crop.top + crop.height / 3,
+      crop.top + crop.height * 2 / 3
+    ]) {
       canvas.drawLine(Offset(crop.left, y), Offset(crop.right, y), grid);
     }
   }
