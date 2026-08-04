@@ -815,14 +815,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     String? currentLanguage;
 
     for (final rawLine in notes.replaceAll('\r\n', '\n').split('\n')) {
-      final marker = RegExp(
-        r'^\s*#{1,6}\s*(pt-br|pt|portugu[eê]s|br|en|english|ingl[eê]s)\s*$',
-        caseSensitive: false,
-      ).firstMatch(rawLine);
+      final marker = _releaseNotesLanguageMarker(rawLine);
       if (marker != null) {
-        final value = marker.group(1)!.toLowerCase();
-        currentLanguage =
-            value.startsWith('en') || value.startsWith('ingl') ? 'en' : 'pt';
+        currentLanguage = marker;
         sections.putIfAbsent(currentLanguage, () => []);
         continue;
       }
@@ -831,12 +826,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     }
 
-    if (sections.isEmpty) return notes.trim();
+    if (sections.isEmpty) {
+      return notes
+          .replaceAll(RegExp(r'^\s*<!--\s*\[/?(?:pt-br|pt|br|en)\]\s*-->\s*$',
+              caseSensitive: false, multiLine: true), '')
+          .trim();
+    }
     return (sections[preferred] ??
             sections[preferred == 'en' ? 'pt' : 'en'] ??
             [])
+        .where((line) => _releaseNotesLanguageMarker(line) == null)
         .join('\n')
         .trim();
+  }
+
+  String? _releaseNotesLanguageMarker(String line) {
+    final htmlMarker = RegExp(
+      r'^\s*<!--\s*\[?/?\s*(pt-br|pt|portugu[eê]s|br|en|english|ingl[eê]s)\s*\]?\s*-->\s*$',
+      caseSensitive: false,
+    ).firstMatch(line);
+    final markdownMarker = RegExp(
+      r'^\s*#{1,6}\s*\[?\s*(pt-br|pt|portugu[eê]s|br|en|english|ingl[eê]s)\s*\]?\s*$',
+      caseSensitive: false,
+    ).firstMatch(line);
+    final value = (htmlMarker ?? markdownMarker)?.group(1)?.toLowerCase();
+    if (value == null) return null;
+    return value.startsWith('en') || value.startsWith('ingl') ? 'en' : 'pt';
   }
 
   Widget _releaseNotesCard(String notes) {
